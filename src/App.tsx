@@ -449,6 +449,7 @@ function App() {
           agentCommand: agentDef?.command ?? 'claude',
           agentArgs: agentDef?.args ?? [],
           agentEnvFile: agentDef ? store.agentEnvFiles[agentDef.id] : undefined,
+          agentEnv: agentDef?.env,
           dockerContainerName,
           dockerImage: task.dockerMode ? task.dockerImage : undefined,
         })

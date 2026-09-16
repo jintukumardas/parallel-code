@@ -319,6 +319,7 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
         agentCommand: agentDef.command,
         agentArgs: agentDef.args,
         agentEnvFile: store.agentEnvFiles[agentDef.id],
+        agentEnv: agentDef.env,
         dockerContainerName,
         dockerImage,
       });
@@ -1478,6 +1479,7 @@ export function retryTaskMcpStartup(taskId: string): Promise<void> {
       // Sub-tasks are spawned by the coordinator in the main process, which has
       // no access to the settings store — hand it the env file up front.
       agentEnvFile: agentDef ? store.agentEnvFiles[agentDef.id] : undefined,
+      agentEnv: agentDef?.env,
       dockerContainerName,
       dockerImage: task.dockerImage,
     })

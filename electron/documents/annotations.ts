@@ -13,6 +13,7 @@ import { errMessage } from '../log.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { buildPtySpawnEnv, validateCommand } from '../ipc/pty.js';
 import { loadEnvFile } from '../ipc/env-file.js';
+import { assertOptionalStringRecord } from '../ipc/validate.js';
 import { truncateBytes } from './prompt.js';
 import { buildHeadlessLaunch, createHeadlessParser } from './agents.js';
 import { documentAgentSupport } from './shared.js';
@@ -268,6 +269,7 @@ export interface AskAnnotationArgs {
   agentName: unknown;
   command: unknown;
   envFile?: unknown;
+  agentEnv?: unknown;
 }
 
 interface ActiveAsk {
@@ -375,6 +377,8 @@ export async function askAnnotation(
   const command = text(args.command, 'command', 200);
   if (!command.trim() || /[\s;&|<>$`'"\\]/.test(command)) throw new Error('command is invalid');
   const envFile = args.envFile === undefined ? undefined : text(args.envFile, 'envFile', 1_000);
+  assertOptionalStringRecord(args.agentEnv, 'agentEnv');
+  const agentEnv = args.agentEnv;
   validateCommand(command);
 
   cancelAsk(annotationId);
@@ -393,7 +397,7 @@ export async function askAnnotation(
     newSessionId: randomUUID(),
     readOnly: true,
   });
-  const env = buildPtySpawnEnv({}, envFile?.trim() ? loadEnvFile(envFile) : {});
+  const env = buildPtySpawnEnv({}, envFile?.trim() ? loadEnvFile(envFile) : {}, agentEnv);
   const parser = createHeadlessParser(agentId);
   const proc = spawn(launch.command, launch.args, {
     cwd: projectRoot,

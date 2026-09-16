@@ -15,6 +15,7 @@ import { errMessage } from '../log.js';
 import { atomicWriteFileSync } from '../mcp/atomic.js';
 import { buildPtySpawnEnv, validateCommand } from '../ipc/pty.js';
 import { loadEnvFile } from '../ipc/env-file.js';
+import { assertOptionalStringRecord } from '../ipc/validate.js';
 import { createWorktree, ensureWorktreeContainerExclude, removeWorktree } from '../ipc/git.js';
 import { git, gitOk } from './git.js';
 import { buildHeadlessLaunch, createHeadlessParser } from './agents.js';
@@ -130,6 +131,12 @@ function validateCandidateSpecs(value: unknown): DocumentCandidateSpec[] {
       if (typeof v !== 'string') throw new Error(`candidate.${key} must be a string`);
       return v;
     };
+    const optEnv = (key: string): Record<string, string> | undefined => {
+      const v = c[key];
+      if (v === undefined || v === null) return undefined;
+      assertOptionalStringRecord(v, `candidate.${key}`);
+      return v;
+    };
     const label = str('label');
     if (!/^[A-Za-z0-9 _-]{1,24}$/.test(label)) throw new Error('candidate.label is invalid');
     const agentId = str('agentId');
@@ -167,6 +174,7 @@ function validateCandidateSpecs(value: unknown): DocumentCandidateSpec[] {
       sessionId,
       sessionLastSha,
       envFile: optStr('envFile'),
+      agentEnv: optEnv('agentEnv'),
     };
   });
 }
@@ -935,7 +943,7 @@ function spawnCandidate(
     effort: spec.effort,
   });
   const fileEnv = spec.envFile?.trim() ? loadEnvFile(spec.envFile) : {};
-  const env = buildPtySpawnEnv({}, fileEnv);
+  const env = buildPtySpawnEnv({}, fileEnv, spec.agentEnv);
   const parser = createHeadlessParser(spec.agentId);
 
   const proc = spawn(launch.command, launch.args, {

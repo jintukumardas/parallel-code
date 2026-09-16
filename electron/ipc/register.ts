@@ -108,6 +108,7 @@ import {
   assertOptionalString,
   assertOptionalBoolean,
   validatePath,
+  assertOptionalStringRecord,
 } from './validate.js';
 import { registerDocumentHandlers } from '../documents/register.js';
 import { validateBranchName as sharedValidateBranchName, validateUUID } from '../mcp/validation.js';
@@ -207,6 +208,7 @@ export function validateStartMCPServerArgs(args: Record<string, unknown>): void 
   if (args.agentCommand !== undefined) assertString(args.agentCommand, 'agentCommand');
   if (args.agentArgs !== undefined) assertStringArray(args.agentArgs, 'agentArgs');
   assertOptionalString(args.agentEnvFile, 'agentEnvFile');
+  assertOptionalStringRecord(args.agentEnv, 'agentEnv');
   assertOptionalBoolean(args.skipPermissions, 'skipPermissions');
   assertOptionalBoolean(args.propagateSkipPermissions, 'propagateSkipPermissions');
   if (args.maxConcurrentTasks !== undefined)
@@ -451,6 +453,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     assertOptionalBoolean(args.attachExisting, 'attachExisting');
     assertOptionalBoolean(args.stepsEnabled, 'stepsEnabled');
     assertOptionalString(args.envFile, 'envFile');
+    assertOptionalStringRecord(args.agentEnv, 'agentEnv');
     if (args.cwd) validatePath(args.cwd, 'cwd');
     if (!args.isShell && args.cwd) {
       try {
@@ -934,6 +937,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     const provider: string | undefined =
       typeof args.provider === 'string' ? args.provider : undefined;
     assertOptionalString(args.envFile, 'envFile');
+    assertOptionalStringRecord(args.agentEnv, 'agentEnv');
     askAboutCode(win, {
       requestId: args.requestId,
       channelId: args.onOutput.__CHANNEL_ID__,
@@ -941,6 +945,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
       cwd: args.cwd,
       provider: provider === 'minimax' ? 'minimax' : 'claude',
       envFile: args.envFile,
+      agentEnv: args.agentEnv,
     });
   });
 
@@ -1649,6 +1654,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
         agentCommand?: string;
         agentArgs?: string[];
         agentEnvFile?: string;
+        agentEnv?: Record<string, string>;
         dockerContainerName?: string;
         dockerImage?: string;
         maxConcurrentTasks?: number;
@@ -1811,6 +1817,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
         args.agentArgs ?? [],
       );
       coordinator.setCoordinatorAgentEnvFile(args.coordinatorTaskId, args.agentEnvFile);
+      coordinator.setCoordinatorAgentEnv(args.coordinatorTaskId, args.agentEnv);
 
       // In docker mode the coordinator agent auto-discovers .mcp.json in the project root.
       // No host-temp configPath needed.

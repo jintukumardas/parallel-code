@@ -272,6 +272,36 @@ describe('buildPtySpawnEnv', () => {
     const env = buildPtySpawnEnv({ ANTHROPIC_API_KEY: 'per-task' }, { ANTHROPIC_API_KEY: 'file' });
     expect(env.ANTHROPIC_API_KEY).toBe('per-task');
   });
+
+  it('applies agent definition env over the inherited environment', () => {
+    vi.stubEnv('CLAUDE_CONFIG_DIR', '/home/u/.claude');
+
+    const env = buildPtySpawnEnv({}, {}, { CLAUDE_CONFIG_DIR: '/home/u/.claude-work' });
+
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/home/u/.claude-work');
+  });
+
+  it('ranks agent definition env below the env file and per-task env', () => {
+    const fromDef = buildPtySpawnEnv({}, { KEY: 'file' }, { KEY: 'def' });
+    expect(fromDef.KEY).toBe('file');
+
+    const fromTask = buildPtySpawnEnv({ KEY: 'per-task' }, { KEY: 'file' }, { KEY: 'def' });
+    expect(fromTask.KEY).toBe('per-task');
+  });
+
+  it('keeps the block list authoritative over agent definition env', () => {
+    vi.stubEnv('PARALLEL_CODE_MCP_TOKEN', 'host-token');
+
+    const env = buildPtySpawnEnv(
+      {},
+      {},
+      { PATH: '/tmp/bad-path', HOME: '/tmp/bad-home', PARALLEL_CODE_MCP_TOKEN: 'def-token' },
+    );
+
+    expect(env.PATH).not.toBe('/tmp/bad-path');
+    expect(env.HOME).not.toBe('/tmp/bad-home');
+    expect(env.PARALLEL_CODE_MCP_TOKEN).toBe('host-token');
+  });
 });
 
 describe('spawnAgent docker mode', () => {

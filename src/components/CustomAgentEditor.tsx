@@ -1,6 +1,7 @@
 import { For, Show, createSignal } from 'solid-js';
 import { store, addCustomAgent, removeCustomAgent } from '../store/store';
 import { theme } from '../lib/theme';
+import { parseAgentEnv } from '../lib/agent-env';
 import type { AgentDef } from '../ipc/types';
 
 export function CustomAgentEditor() {
@@ -9,6 +10,7 @@ export function CustomAgentEditor() {
   const [command, setCommand] = createSignal('');
   const [resumeArgs, setResumeArgs] = createSignal('');
   const [skipArgs, setSkipArgs] = createSignal('');
+  const [envText, setEnvText] = createSignal('');
 
   function handleAdd() {
     const n = name().trim();
@@ -27,12 +29,14 @@ export function CustomAgentEditor() {
       resume_args: resumeArgs().trim() ? resumeArgs().trim().split(/\s+/) : [],
       skip_permissions_args: skipArgs().trim() ? skipArgs().trim().split(/\s+/) : [],
       description: `Custom agent: ${n}`,
+      env: parseAgentEnv(envText()),
     };
     addCustomAgent(agent);
     setName('');
     setCommand('');
     setResumeArgs('');
     setSkipArgs('');
+    setEnvText('');
     setShowForm(false);
   }
 
@@ -72,6 +76,7 @@ export function CustomAgentEditor() {
                 }}
               >
                 {agent.command}
+                {agent.env ? ` · ${Object.keys(agent.env).join(' ')}` : ''}
               </span>
             </div>
             <button
@@ -150,6 +155,24 @@ export function CustomAgentEditor() {
             onInput={(e) => setSkipArgs(e.currentTarget.value)}
             style={inputStyle()}
           />
+          <textarea
+            placeholder={
+              'Environment (optional), one KEY=VALUE per line\ne.g. CLAUDE_CONFIG_DIR=~/.claude-work'
+            }
+            value={envText()}
+            onInput={(e) => setEnvText(e.currentTarget.value)}
+            rows={3}
+            style={{
+              ...inputStyle(),
+              'font-family': "'JetBrains Mono', monospace",
+              resize: 'vertical',
+            }}
+          />
+          <div style={{ 'font-size': '11px', color: theme.fgSubtle, 'line-height': '1.5' }}>
+            Set every time this agent launches, so one CLI can be added twice under different
+            profiles. Stored in settings — keep secrets in the agent's env file instead (Agent
+            Environment, below), which overrides these.
+          </div>
           <div style={{ display: 'flex', gap: '8px', 'justify-content': 'flex-end' }}>
             <button
               type="button"

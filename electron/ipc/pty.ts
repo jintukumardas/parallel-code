@@ -148,6 +148,9 @@ export interface SpawnAgentArgs {
   /** Optional path to a `KEY=VALUE` file whose contents are merged into the
    *  spawn environment. Re-read on every spawn so edits need no app restart. */
   envFile?: string;
+  /** `AgentDef.env` for the agent being launched — its own baseline environment.
+   *  Lowest precedence: the env file and per-task `env` both override it. */
+  agentEnv?: Record<string, string>;
   cols: number;
   rows: number;
   isShell?: boolean;
@@ -242,6 +245,7 @@ function copyProcessEnv(): Record<string, string> {
 export function buildPtySpawnEnv(
   rendererEnv: Record<string, string> = {},
   fileEnv: Record<string, string> = {},
+  agentEnv: Record<string, string> = {},
 ): Record<string, string> {
   const spawnEnv: Record<string, string> = {
     ...copyProcessEnv(),
@@ -249,10 +253,13 @@ export function buildPtySpawnEnv(
     COLORTERM: 'truecolor',
   };
 
-  // Both override the inherited login-shell environment, per-task env winning
-  // over the file, and both stay subject to ENV_BLOCK_LIST so the main process
-  // remains authoritative over PATH/HOME/SHELL and the MCP token.
-  for (const [key, value] of Object.entries({ ...fileEnv, ...rendererEnv })) {
+  // All three override the inherited login-shell environment, in order of how
+  // specific the source is: the agent definition is the agent's own baseline
+  // (a profile switch that rides with the agent), the env file is the user's
+  // per-agent secret store, and per-task env is the narrowest, so it wins. All
+  // stay subject to ENV_BLOCK_LIST so the main process remains authoritative
+  // over PATH/HOME/SHELL and the MCP token.
+  for (const [key, value] of Object.entries({ ...agentEnv, ...fileEnv, ...rendererEnv })) {
     if (!ENV_BLOCK_LIST.has(key)) spawnEnv[key] = value;
   }
 
@@ -560,7 +567,7 @@ export function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): void {
 
   cleanupExistingSession(args.agentId, existing);
 
-  const spawnEnv = buildPtySpawnEnv(args.env, fileEnv);
+  const spawnEnv = buildPtySpawnEnv(args.env, fileEnv, args.agentEnv);
   const launchArgs = applyAgentHookLaunch(args, command, spawnEnv);
 
   // Backfill sandbox placeholders for pre-existing worktrees (and anywhere

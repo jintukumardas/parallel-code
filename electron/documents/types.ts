@@ -144,6 +144,8 @@ export interface DocumentCandidateSpec {
   sessionLastSha?: string;
   /** Per-agent env file, when configured. */
   envFile?: string;
+  /** `AgentDef.env` for this candidate's agent. Overridden by `envFile`. */
+  agentEnv?: Record<string, string>;
 }
 
 export interface DocumentHistoryEntry {

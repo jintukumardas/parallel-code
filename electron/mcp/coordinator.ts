@@ -210,6 +210,7 @@ export class Coordinator {
     args: [],
   };
   private coordinatorAgentEnvFile: string | undefined;
+  private coordinatorAgentEnv: Record<string, string> | undefined;
   private coordinators = new Map<string, CoordinatorState>();
   private notificationDelayMs = 30_000;
   private readonly COORDINATOR_RESTAMP_DELAY_MS = 5 * 60_000;
@@ -747,6 +748,14 @@ export class Coordinator {
     this.coordinatorAgentEnvFile = envFile;
   }
 
+  /** Same reasoning as the env file: a coordinator running the "work" Claude
+   *  profile must not hand its sub-tasks the default one. */
+  setCoordinatorAgentEnv(coordinatorTaskId: string, env: Record<string, string> | undefined): void {
+    const state = this.coordinators.get(coordinatorTaskId);
+    if (state) state.agentEnv = env;
+    this.coordinatorAgentEnv = env;
+  }
+
   setDockerContainerName(coordinatorTaskId: string, name: string | null): void {
     const state = this.coordinators.get(coordinatorTaskId);
     if (state) {
@@ -1125,6 +1134,7 @@ export class Coordinator {
         cwd: result.worktree_path,
         env: {},
         envFile: coordinatorState.agentEnvFile,
+        agentEnv: coordinatorState.agentEnv,
         cols: 120,
         rows: 40,
         ...(dockerContainerName
@@ -2303,6 +2313,7 @@ export class Coordinator {
       mcpServerInfo: null,
       spawnDefaults: { ...this.coordinatorSpawnDefaults },
       agentEnvFile: this.coordinatorAgentEnvFile,
+      agentEnv: this.coordinatorAgentEnv,
       pendingNotifications: [],
       stagedBatches: new Map(),
       ackedBatchIds: [],

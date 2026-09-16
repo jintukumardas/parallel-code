@@ -65,6 +65,9 @@ export function AskCodeCard(props: AskCodeCardProps) {
       onOutput: channel,
       provider: store.askCodeProvider,
       envFile: store.agentEnvFiles['claude-code'],
+      // Ask Code always shells out to `claude`, so it follows the bundled
+      // Claude Code agent's environment — including a profile override.
+      agentEnv: store.availableAgents.find((a) => a.id === 'claude-code')?.env,
     }).catch((err: unknown) => {
       setError(errMessage(err));
       setLoading(false);

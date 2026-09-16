@@ -19,6 +19,12 @@ export interface AgentDef {
   prompt_ready_delay_ms?: number;
   /** CLI flag used to pass an MCP config path to this agent. Omit when unsupported. */
   mcp_config_flag?: string;
+  /** Environment variables applied every time this agent is spawned, so a
+   *  profile switch (CLAUDE_CONFIG_DIR, a base-URL override, …) travels with the
+   *  agent rather than being pinned to one task. Lowest precedence of the three
+   *  env sources: the agent's env file overrides it, and per-task env overrides
+   *  both. ENV_BLOCK_LIST still applies — see buildPtySpawnEnv. */
+  env?: Record<string, string>;
 }
 
 export interface CreateTaskResult {

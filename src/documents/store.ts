@@ -447,6 +447,7 @@ export function buildCandidateSpecs(
         sessionId: session?.sessionId,
         sessionLastSha: session?.lastSha,
         envFile: envFiles[pick.agent.id],
+        agentEnv: pick.agent.env,
       });
       index++;
     }
@@ -814,6 +815,7 @@ export async function askDocumentAnnotation(annotationId: string, agent: AgentDe
       agentName: agent.name,
       command: agent.command,
       envFile: store.agentEnvFiles[agent.id],
+      agentEnv: agent.env,
     });
     putAnnotation(pending);
   } catch (err) {

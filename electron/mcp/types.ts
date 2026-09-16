@@ -85,6 +85,9 @@ export interface CoordinatorState {
   /** Env file the coordinator's own agent uses; sub-tasks inherit it so they
    *  get the same credentials. Undefined when no env file is configured. */
   agentEnvFile?: string;
+  /** `AgentDef.env` of the coordinator's agent; sub-tasks inherit it so they run
+   *  the same agent profile. Overridden by `agentEnvFile`. */
+  agentEnv?: Record<string, string>;
   pendingNotifications: PendingNotification[];
   /** batchId → array of pendingNotification IDs included in that batch */
   stagedBatches: Map<string, string[]>;

@@ -26,6 +26,8 @@ interface AskCodeRequest {
   provider?: AskCodeProvider;
   /** Env file configured for the Claude Code agent, if any. */
   envFile?: string;
+  /** `AgentDef.env` for the Claude Code agent. Overridden by the env file. */
+  agentEnv?: Record<string, string>;
 }
 
 const activeRequests = new RequestRegistry<ChildProcess>({
@@ -34,7 +36,7 @@ const activeRequests = new RequestRegistry<ChildProcess>({
 });
 
 export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
-  const { requestId, channelId, prompt, cwd, provider, envFile } = args;
+  const { requestId, channelId, prompt, cwd, provider, envFile, agentEnv } = args;
 
   // Route to MiniMax backend when configured
   if (provider === 'minimax') {
@@ -56,12 +58,12 @@ export function askAboutCode(win: BrowserWindow, args: AskCodeRequest): void {
     if (v !== undefined) filteredEnv[k] = v;
   }
   // Ask Code runs the same `claude` CLI as an agent terminal, so it needs the
-  // same credentials — otherwise configuring an env file fixes the terminals
-  // and leaves this silently broken.
-  if (envFile?.trim()) {
-    for (const [k, v] of Object.entries(loadEnvFile(envFile))) {
-      if (!ENV_BLOCK_LIST.has(k)) filteredEnv[k] = v;
-    }
+  // same environment — otherwise configuring an agent fixes the terminals and
+  // leaves this silently answering from a different profile (or unauthenticated).
+  // Same precedence as buildPtySpawnEnv: the env file overrides the agent def.
+  const askEnv = { ...(agentEnv ?? {}), ...(envFile?.trim() ? loadEnvFile(envFile) : {}) };
+  for (const [k, v] of Object.entries(askEnv)) {
+    if (!ENV_BLOCK_LIST.has(k)) filteredEnv[k] = v;
   }
   // Clear env vars that prevent nested agent sessions
   delete filteredEnv.CLAUDECODE;

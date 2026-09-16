@@ -703,6 +703,7 @@ function AgentTerminalPane(props: {
                 args={buildTaskAgentArgs(a().def, props.task, a().resumed)}
                 cwd={props.task.worktreePath}
                 envFile={store.agentEnvFiles[a().def.id]}
+                agentEnv={a().def.env}
                 stepsEnabled={props.task.stepsEnabled}
                 dockerMode={
                   props.task.dockerMode ||

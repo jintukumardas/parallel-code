@@ -1,20 +1,9 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { getSkipPermissionsArgs } from '../shared/skip-permissions.js';
+import type { AgentDef } from './shared-types.js';
 
 const execFileAsync = promisify(execFile);
-
-interface AgentDef {
-  id: string;
-  name: string;
-  command: string;
-  args: string[];
-  resume_args: string[];
-  skip_permissions_args: string[];
-  description: string;
-  available?: boolean;
-  prompt_ready_delay_ms?: number;
-}
 
 const DEFAULT_AGENTS: AgentDef[] = [
   {

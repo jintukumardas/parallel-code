@@ -7,6 +7,7 @@ import { effectiveAgentId } from './agent-select';
 import { randomPastelColor } from './projects';
 import { markAgentSpawned } from './taskStatus';
 import { clampCoordinatorConcurrentTasks } from '../lib/coordinator-limits';
+import { sanitizeAgentEnv } from '../lib/agent-env';
 
 // Hand-edited state files may hold anything; the IPC layer rejects non-integers.
 function restoredMaxConcurrentTasks(value: unknown): number | undefined {
@@ -688,14 +689,19 @@ export async function loadState(): Promise<void> {
 
       // Restore custom agents
       if (Array.isArray(raw.customAgents)) {
-        s.customAgents = raw.customAgents.filter(
-          (a: unknown): a is AgentDef =>
-            typeof a === 'object' &&
-            a !== null &&
-            typeof (a as AgentDef).id === 'string' &&
-            typeof (a as AgentDef).name === 'string' &&
-            typeof (a as AgentDef).command === 'string',
-        );
+        s.customAgents = raw.customAgents
+          .filter(
+            (a: unknown): a is AgentDef =>
+              typeof a === 'object' &&
+              a !== null &&
+              typeof (a as AgentDef).id === 'string' &&
+              typeof (a as AgentDef).name === 'string' &&
+              typeof (a as AgentDef).command === 'string',
+          )
+          // `env` reaches a spawn, so a hand-edited or corrupted settings file
+          // must not be able to put a non-record (or a key no child process can
+          // take) into it.
+          .map((a) => ({ ...a, env: sanitizeAgentEnv(a.env) }));
       }
 
       if (raw.agentEnvFiles && typeof raw.agentEnvFiles === 'object') {

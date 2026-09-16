@@ -34,6 +34,20 @@ export function assertOptionalString(
     throw new Error(`${label} must be a string or undefined`);
 }
 
+/** A plain `Record<string, string>`, or undefined. Rejects arrays and null so a
+ *  caller cannot smuggle a non-object through `typeof x === 'object'`. */
+export function assertOptionalStringRecord(
+  val: unknown,
+  label: string,
+): asserts val is Record<string, string> | undefined {
+  if (val === undefined) return;
+  if (typeof val !== 'object' || val === null || Array.isArray(val))
+    throw new Error(`${label} must be an object or undefined`);
+  for (const [k, v] of Object.entries(val)) {
+    if (typeof v !== 'string') throw new Error(`${label}.${k} must be a string`);
+  }
+}
+
 export function assertOptionalBoolean(
   val: unknown,
   label: string,

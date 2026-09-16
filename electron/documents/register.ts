@@ -187,6 +187,7 @@ export function registerDocumentHandlers(win: BrowserWindow): void {
       agentName: args.agentName,
       command: args.command,
       envFile: args.envFile,
+      agentEnv: args.agentEnv,
     });
   });
 }

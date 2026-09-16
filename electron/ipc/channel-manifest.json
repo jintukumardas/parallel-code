@@ -8,6 +8,7 @@
   "CountRunningAgents": "count_running_agents",
   "KillAllAgents": "kill_all_agents",
   "ListAgents": "list_agents",
+  "ListClaudeProfiles": "list_claude_profiles",
   "CreateTask": "create_task",
   "DeleteTask": "delete_task",
   "GetChangedFiles": "get_changed_files",

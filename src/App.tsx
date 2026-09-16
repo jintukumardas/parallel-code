@@ -30,6 +30,7 @@ import * as log from './lib/log';
 import {
   store,
   loadAgents,
+  loadClaudeProfiles,
   loadState,
   saveState,
   toggleNewTaskPanel,
@@ -404,6 +405,7 @@ function App() {
     })();
 
     await loadAgents();
+    void loadClaudeProfiles();
     invoke<boolean>(IPC.CheckDockerAvailable).then(
       (available) => setDockerAvailable(available),
       () => setDockerAvailable(false),

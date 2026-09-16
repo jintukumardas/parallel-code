@@ -1,5 +1,6 @@
 import type {
   AgentDef,
+  ClaudeProfile,
   StepEntry,
   UsageProvider,
   UsageWindow,
@@ -177,6 +178,15 @@ export interface Task {
   branchAdoptedFrom?: string;
   externalWorktree?: boolean;
   skipPermissions?: boolean;
+  /** Absolute `CLAUDE_CONFIG_DIR` this task's agent runs under, chosen when the
+   *  task was created. Undefined means the default profile (nothing is set, so
+   *  an inherited value or the agent def's own env still applies). */
+  agentProfileDir?: string;
+  /** `--model` alias the task launches with. Undefined leaves the CLI on
+   *  whatever it remembers. */
+  agentModel?: string;
+  /** `--effort` level the task launches with. */
+  agentEffort?: string;
   dockerMode?: boolean;
   dockerSource?: DockerSource;
   dockerImage?: string;
@@ -268,6 +278,9 @@ export interface PersistedTask {
   baseBranch?: string;
   externalWorktree?: boolean;
   skipPermissions?: boolean;
+  agentProfileDir?: string;
+  agentModel?: string;
+  agentEffort?: string;
   dockerMode?: boolean;
   dockerSource?: DockerSource;
   dockerImage?: string;
@@ -323,6 +336,9 @@ export interface PersistedState {
   projects: Project[];
   lastProjectId: string | null;
   lastAgentId: string | null;
+  lastAgentProfileDir?: string | null;
+  lastAgentModel?: string | null;
+  lastAgentEffort?: string | null;
   taskOrder: string[];
   collapsedTaskOrder?: string[];
   tasks: Record<string, PersistedTask>;
@@ -418,6 +434,14 @@ export interface AppStore {
   projects: Project[];
   lastProjectId: string | null;
   lastAgentId: string | null;
+  /** Claude launch options the last created task used, so the New Task panel
+   *  reopens on the same profile/model instead of the CLI's own defaults. */
+  lastAgentProfileDir: string | null;
+  lastAgentModel: string | null;
+  lastAgentEffort: string | null;
+  /** Claude config dirs found in the user's home; the New Task profile picker's
+   *  options. Discovered at startup, not persisted. */
+  claudeProfiles: ClaudeProfile[];
   taskOrder: string[];
   collapsedTaskOrder: string[];
   tasks: Record<string, Task>;

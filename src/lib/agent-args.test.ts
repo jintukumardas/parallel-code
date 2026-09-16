@@ -285,3 +285,50 @@ describe('buildTaskAgentArgs — skip-permissions on a degraded definition', () 
     expect(buildTaskAgentArgs({ ...degradedClaude, command: 'opencode' }, task, false)).toEqual([]);
   });
 });
+
+describe('buildTaskAgentArgs — model and effort', () => {
+  const task = { skipPermissions: false, agentModel: 'opus', agentEffort: 'high' };
+
+  it('passes both flags to the Claude CLI', () => {
+    expect(buildTaskAgentArgs(claudeAgent, task, false)).toEqual([
+      '--model',
+      'opus',
+      '--effort',
+      'high',
+    ]);
+  });
+
+  it('passes only what the task set', () => {
+    expect(buildTaskAgentArgs(claudeAgent, { ...task, agentEffort: undefined }, false)).toEqual([
+      '--model',
+      'opus',
+    ]);
+    expect(buildTaskAgentArgs(claudeAgent, { ...task, agentModel: undefined }, false)).toEqual([
+      '--effort',
+      'high',
+    ]);
+  });
+
+  it('adds nothing when the task chose neither', () => {
+    expect(buildTaskAgentArgs(claudeAgent, { skipPermissions: false }, false)).toEqual([]);
+  });
+
+  // Other CLIs reject these flags outright, so a stale choice must not follow
+  // the user when they pick a different agent.
+  it('adds nothing for an agent that does not take the flags', () => {
+    expect(buildTaskAgentArgs(codexAgent, task, false)).toEqual([]);
+    expect(buildTaskAgentArgs(antigravityAgent, task, false)).toEqual([]);
+  });
+
+  it('keeps the flags on a resumed session, after the resume args', () => {
+    expect(buildTaskAgentArgs({ ...claudeAgent, resume_args: ['--continue'] }, task, true)).toEqual(
+      ['--continue', '--model', 'opus', '--effort', 'high'],
+    );
+  });
+
+  it('applies to a custom agent wrapping the CLI by absolute path', () => {
+    expect(
+      buildTaskAgentArgs({ ...claudeAgent, command: '/opt/homebrew/bin/claude' }, task, false),
+    ).toEqual(['--model', 'opus', '--effort', 'high']);
+  });
+});

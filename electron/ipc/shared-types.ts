@@ -27,6 +27,19 @@ export interface AgentDef {
   env?: Record<string, string>;
 }
 
+/** A Claude Code config dir (`CLAUDE_CONFIG_DIR`) discovered in the user's home.
+ *  Picking one at task creation is how a task runs under a given login/profile. */
+export interface ClaudeProfile {
+  /** Directory name (`.claude-work`), or the absolute path for a profile that
+   *  came from an inherited `CLAUDE_CONFIG_DIR`. */
+  id: string;
+  /** Label for the picker — the suffix after `.claude-`, or "Default". */
+  name: string;
+  configDir: string;
+  /** True for `~/.claude`, the dir the CLI uses when nothing is set. */
+  isDefault: boolean;
+}
+
 export interface CreateTaskResult {
   id: string;
   branch_name: string;

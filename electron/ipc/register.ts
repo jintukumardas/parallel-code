@@ -78,6 +78,7 @@ import {
 } from './git.js';
 import { createTask, deleteTask } from './tasks.js';
 import { listAgents } from './agents.js';
+import { listClaudeProfiles } from './claude-profiles.js';
 import {
   saveAppState,
   loadAppState,
@@ -511,6 +512,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   // --- Agent commands ---
   ipcMain.handle(IPC.ListAgents, () => listAgents());
+  ipcMain.handle(IPC.ListClaudeProfiles, () => listClaudeProfiles());
   ipcMain.handle(IPC.CheckDockerAvailable, () => isDockerAvailable());
   ipcMain.handle(IPC.CheckDockerImageExists, (_e, args) => {
     assertString(args.image, 'image');

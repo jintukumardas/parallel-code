@@ -21,6 +21,8 @@ import {
 import { recordMergedLines, recordTaskMerged } from './completion';
 import { warn as logWarn } from '../lib/log';
 import { cleanTaskName } from '../lib/clean-task-name';
+import { supportsClaudeLaunchOptions, taskProfileEnv } from '../lib/agent-profile';
+import { buildModelArgs } from '../lib/agent-args';
 import type {
   AgentDef,
   CreateTaskResult,
@@ -226,6 +228,10 @@ export interface CreateTaskOptions {
   initialPrompt?: string;
   githubUrl?: string;
   skipPermissions?: boolean;
+  /** Absolute `CLAUDE_CONFIG_DIR` to launch under; omit for the default profile. */
+  agentProfileDir?: string;
+  agentModel?: string;
+  agentEffort?: string;
   dockerMode?: boolean;
   dockerSource?: DockerSource;
   dockerImage?: string;
@@ -317,9 +323,21 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
         maxConcurrentTasks: effectiveMaxConcurrentTasks,
         verifyCommand: getProject(projectId)?.verifyCommand,
         agentCommand: agentDef.command,
-        agentArgs: agentDef.args,
+        // Sub-tasks are spawned by the main process, which never sees the task
+        // record — fold the task's model/profile choice into what it launches
+        // with, or every sub-agent silently runs the default profile.
+        agentArgs: [
+          ...agentDef.args,
+          ...buildModelArgs(agentDef, {
+            agentModel: opts.agentModel,
+            agentEffort: opts.agentEffort,
+          }),
+        ],
         agentEnvFile: store.agentEnvFiles[agentDef.id],
-        agentEnv: agentDef.env,
+        agentEnv: {
+          ...agentDef.env,
+          ...taskProfileEnv({ agentProfileDir: opts.agentProfileDir, dockerMode }, agentDef),
+        },
         dockerContainerName,
         dockerImage,
       });
@@ -380,6 +398,9 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
     savedInitialPrompt: initialPrompt ?? undefined,
     stepsEnabled: stepsEnabled || undefined,
     skipPermissions: skipPermissions ?? undefined,
+    agentProfileDir: opts.agentProfileDir || undefined,
+    agentModel: opts.agentModel || undefined,
+    agentEffort: opts.agentEffort || undefined,
     dockerMode: dockerMode ?? undefined,
     dockerSource: dockerSource ?? undefined,
     dockerImage: dockerImage ?? undefined,
@@ -403,6 +424,18 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
   });
 
   initTaskInStore(taskId, task, agent, projectId, agentDef);
+
+  // Only for agents that take these options: creating a Codex task must not
+  // wipe the Claude profile/model the panel should reopen on.
+  if (supportsClaudeLaunchOptions(agentDef)) {
+    setStore(
+      produce((s) => {
+        s.lastAgentProfileDir = opts.agentProfileDir ?? null;
+        s.lastAgentModel = opts.agentModel ?? null;
+        s.lastAgentEffort = opts.agentEffort ?? null;
+      }),
+    );
+  }
 
   saveState(); // fire-and-forget — errors handled internally
   return taskId;
@@ -1475,11 +1508,15 @@ export function retryTaskMcpStartup(taskId: string): Promise<void> {
       propagateSkipPermissions: task.propagateSkipPermissions ?? false,
       verifyCommand: getProject(task.projectId)?.verifyCommand,
       agentCommand: agentDef?.command ?? 'claude',
-      agentArgs: agentDef?.args ?? [],
+      agentArgs: [
+        ...(agentDef?.args ?? []),
+        ...buildModelArgs(agentDef ?? { command: 'claude' }, task),
+      ],
       // Sub-tasks are spawned by the coordinator in the main process, which has
-      // no access to the settings store — hand it the env file up front.
+      // no access to the settings store — hand it the env file and the task's
+      // profile up front.
       agentEnvFile: agentDef ? store.agentEnvFiles[agentDef.id] : undefined,
-      agentEnv: agentDef?.env,
+      agentEnv: { ...agentDef?.env, ...taskProfileEnv(task, agentDef ?? { command: 'claude' }) },
       dockerContainerName,
       dockerImage: task.dockerImage,
     })

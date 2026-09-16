@@ -1513,7 +1513,9 @@ textarea::placeholder {
 .input-field:focus,
 .prompt-textarea:focus,
 .project-select:focus-visible,
+.form-select:focus-visible,
 .project-select:focus,
+.form-select:focus,
 .agent-btn:focus-visible,
 .btn-primary:focus-visible,
 .btn-secondary:focus-visible {
@@ -1525,11 +1527,14 @@ textarea::placeholder {
 }
 
 .project-select,
-.project-select::picker(select) {
+.form-select,
+.project-select::picker(select),
+.form-select::picker(select) {
   appearance: base-select;
 }
 
-.project-select {
+.project-select,
+.form-select {
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1543,16 +1548,25 @@ textarea::placeholder {
   outline: none;
 }
 
-.project-select::picker-icon {
+.project-select:disabled,
+.form-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.project-select::picker-icon,
+.form-select::picker-icon {
   color: var(--fg-muted);
   transition: rotate 0.14s ease;
 }
 
-.project-select:open::picker-icon {
+.project-select:open::picker-icon,
+.form-select:open::picker-icon {
   rotate: 180deg;
 }
 
-.project-select::picker(select) {
+.project-select::picker(select),
+.form-select::picker(select) {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1560,7 +1574,8 @@ textarea::placeholder {
   padding: 4px;
 }
 
-.project-select option {
+.project-select option,
+.form-select option {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1571,20 +1586,24 @@ textarea::placeholder {
   background: transparent;
 }
 
-.project-select option:hover {
+.project-select option:hover,
+.form-select option:hover {
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-hover));
 }
 
-.project-select option:checked {
+.project-select option:checked,
+.form-select option:checked {
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
-.project-select option::checkmark {
+.project-select option::checkmark,
+.form-select option::checkmark {
   display: none;
 }
 
-.project-select button {
+.project-select button,
+.form-select button {
   display: flex;
   align-items: center;
   gap: 8px;

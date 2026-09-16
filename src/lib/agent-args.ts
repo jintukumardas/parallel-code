@@ -2,6 +2,7 @@ import type { AgentDef } from '../ipc/types';
 import type { Task } from '../store/types';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
 import { isDocumentAgentTaskId } from '../documents/task-id';
+import { supportsClaudeLaunchOptions } from './agent-profile';
 
 function isCodexCommand(command: string): boolean {
   return command.split('/').pop()?.includes('codex') === true;
@@ -36,9 +37,29 @@ function legacyMcpConfigArgs(command: string, mcpConfigPath: string | undefined)
   return ['--mcp-config', mcpConfigPath];
 }
 
+/**
+ * `--model` / `--effort` for the model the task was created with. Only the
+ * Claude CLI takes these flags; other agents get nothing, so an unset choice
+ * and an unsupported agent both leave the CLI on its own remembered setting.
+ * Safe alongside resume args — the flags apply to the continued session.
+ */
+export function buildModelArgs(
+  agentDef: Pick<AgentDef, 'command'>,
+  task: Pick<Task, 'agentModel' | 'agentEffort'>,
+): string[] {
+  if (!supportsClaudeLaunchOptions(agentDef)) return [];
+  return [
+    ...(task.agentModel ? ['--model', task.agentModel] : []),
+    ...(task.agentEffort ? ['--effort', task.agentEffort] : []),
+  ];
+}
+
 export function buildTaskAgentArgs(
   agentDef: AgentDef,
-  task: Pick<Task, 'skipPermissions' | 'mcpConfigPath' | 'mcpLaunchArgs'> &
+  task: Pick<
+    Task,
+    'skipPermissions' | 'mcpConfigPath' | 'mcpLaunchArgs' | 'agentModel' | 'agentEffort'
+  > &
     Partial<Pick<Task, 'id'>>,
   resumed: boolean,
 ): string[] {
@@ -63,6 +84,7 @@ export function buildTaskAgentArgs(
   }
   return [
     ...args,
+    ...buildModelArgs(agentDef, task),
     // Resolved, not read straight off the def: a def restored from an older
     // profile or synthesised from a bare command carries no skip args, and
     // reading the field directly downgrades an explicit opt-in to a launch

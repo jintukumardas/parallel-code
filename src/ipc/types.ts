@@ -2,6 +2,7 @@ export type {
   AgentDef,
   BranchPrDetectionResult,
   ChangedFile,
+  ClaudeProfile,
   CommitInfo,
   CoverageFileSummary,
   CoverageMetricSummary,

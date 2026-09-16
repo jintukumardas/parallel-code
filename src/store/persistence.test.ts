@@ -1375,3 +1375,89 @@ describe('browser preview persistence', () => {
     expect(saved.tasks['task-2'].browserUrl).toBe(task.browserUrl);
   });
 });
+
+describe('Claude launch option persistence', () => {
+  function stateWith(extra: Record<string, unknown>, task: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      projects: [{ id: 'project-1', name: 'Repo', path: '/repo', color: 'hsl(0, 70%, 75%)' }],
+      lastProjectId: 'project-1',
+      lastAgentId: null,
+      taskOrder: ['task-1'],
+      collapsedTaskOrder: [],
+      tasks: { 'task-1': { ...persistedTask(agentDef()), ...task } },
+      activeTaskId: 'task-1',
+      sidebarVisible: true,
+      ...extra,
+    });
+  }
+
+  async function savedState(): Promise<
+    { tasks: Record<string, PersistedTask> } & Record<string, unknown>
+  > {
+    mockInvoke.mockResolvedValueOnce(undefined);
+    await saveState();
+    const lastCall = mockInvoke.mock.calls[mockInvoke.mock.calls.length - 1];
+    return JSON.parse(lastCall[1].json);
+  }
+
+  // A restored task must resume under the profile and model it was created
+  // with; falling back to the default would quietly switch the login.
+  it('round-trips a task profile, model and effort', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      stateWith(
+        {},
+        {
+          agentProfileDir: '/home/me/.claude-work',
+          agentModel: 'opus',
+          agentEffort: 'high',
+        },
+      ),
+    );
+    await loadState();
+    expect(store.tasks['task-1'].agentProfileDir).toBe('/home/me/.claude-work');
+    expect(store.tasks['task-1'].agentModel).toBe('opus');
+    expect(store.tasks['task-1'].agentEffort).toBe('high');
+
+    const saved = await savedState();
+    expect(saved.tasks['task-1'].agentProfileDir).toBe('/home/me/.claude-work');
+    expect(saved.tasks['task-1'].agentModel).toBe('opus');
+    expect(saved.tasks['task-1'].agentEffort).toBe('high');
+  });
+
+  it('drops a model or effort it does not recognise', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      stateWith({}, { agentModel: 'gpt-5', agentEffort: 'extreme', agentProfileDir: '' }),
+    );
+    await loadState();
+    expect(store.tasks['task-1'].agentModel).toBeUndefined();
+    expect(store.tasks['task-1'].agentEffort).toBeUndefined();
+    expect(store.tasks['task-1'].agentProfileDir).toBeUndefined();
+  });
+
+  it('round-trips the last-used choices the New Task panel reopens on', async () => {
+    mockInvoke.mockResolvedValueOnce(
+      stateWith({
+        lastAgentProfileDir: '/home/me/.claude-personal',
+        lastAgentModel: 'sonnet',
+        lastAgentEffort: 'max',
+      }),
+    );
+    await loadState();
+    expect(store.lastAgentProfileDir).toBe('/home/me/.claude-personal');
+    expect(store.lastAgentModel).toBe('sonnet');
+    expect(store.lastAgentEffort).toBe('max');
+
+    const saved = await savedState();
+    expect(saved.lastAgentProfileDir).toBe('/home/me/.claude-personal');
+    expect(saved.lastAgentModel).toBe('sonnet');
+    expect(saved.lastAgentEffort).toBe('max');
+  });
+
+  it('starts from no remembered choice when the state file predates them', async () => {
+    mockInvoke.mockResolvedValueOnce(stateWith({}));
+    await loadState();
+    expect(store.lastAgentProfileDir).toBeNull();
+    expect(store.lastAgentModel).toBeNull();
+    expect(store.lastAgentEffort).toBeNull();
+  });
+});

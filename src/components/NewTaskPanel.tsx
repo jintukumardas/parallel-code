@@ -19,11 +19,13 @@ import { errMessage } from '../lib/log';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
+import { supportsClaudeLaunchOptions } from '../lib/agent-profile';
 import {
   store,
   createTask,
   toggleNewTaskPanel,
   loadAgents,
+  loadClaudeProfiles,
   getProject,
   getProjectPath,
   getProjectBranchPrefix,
@@ -54,6 +56,7 @@ import {
 import { theme, sectionLabelStyle, bannerStyle } from '../lib/theme';
 import { isMac } from '../lib/platform';
 import { AgentSelector } from './AgentSelector';
+import { ClaudeLaunchOptions } from './ClaudeLaunchOptions';
 import { BranchPrefixField } from './BranchPrefixField';
 import { BranchCombobox } from './BranchCombobox';
 import { ProjectSelect } from './ProjectSelect';
@@ -393,6 +396,10 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
   const [confirmDiscard, setConfirmDiscard] = createSignal(false);
   const [name, setName] = createSignal('');
   const [selectedAgent, setSelectedAgent] = createSignal<AgentDef | null>(null);
+  // '' means "leave the CLI on its own default" for all three.
+  const [agentProfileDir, setAgentProfileDir] = createSignal('');
+  const [agentModel, setAgentModel] = createSignal('');
+  const [agentEffort, setAgentEffort] = createSignal('');
   const [selectedProjectId, setSelectedProjectId] = createSignal<string | null>(null);
   const [error, setError] = createSignal('');
   const [loading, setLoading] = createSignal(false);
@@ -585,6 +592,18 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
               ? (store.availableAgents.find((a) => a.id === store.lastAgentId) ?? null)
               : null;
             setSelectedAgent(lastAgent ?? store.availableAgents[0] ?? null);
+
+            // Re-scan every open so a profile created since launch is offered.
+            await loadClaudeProfiles();
+            if (cancelled) return;
+            // A profile the user has since deleted must not silently send the
+            // task to a config dir that no longer exists.
+            const lastProfile = store.claudeProfiles.find(
+              (p) => !p.isDefault && p.configDir === store.lastAgentProfileDir,
+            );
+            setAgentProfileDir(lastProfile?.configDir ?? '');
+            setAgentModel(store.lastAgentModel ?? '');
+            setAgentEffort(store.lastAgentEffort ?? '');
           })().catch((err) => {
             if (!cancelled) setError(errMessage(err));
           });
@@ -903,6 +922,10 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
     return pid ? hasDirectTask(pid) : false;
   };
 
+  // Matched on the agent's command, so a custom agent wrapping the Claude CLI
+  // under another profile gets the same controls.
+  const showClaudeOptions = () => supportsClaudeLaunchOptions(selectedAgent());
+
   const agentSupportsSkipPermissions = () => {
     const agent = selectedAgent();
     // Resolve by command as well as by the def's own args: an agent restored
@@ -1006,6 +1029,12 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
         githubUrl: ghUrl,
         stepsEnabled: stepsEnabled(),
         skipPermissions: agentSupportsSkipPermissions() && skipPermissions(),
+        // Docker tasks authenticate through the container's own mounted
+        // credentials, so a host profile dir would point at nothing.
+        agentProfileDir:
+          showClaudeOptions() && !dockerMode() ? agentProfileDir() || undefined : undefined,
+        agentModel: showClaudeOptions() ? agentModel() || undefined : undefined,
+        agentEffort: showClaudeOptions() ? agentEffort() || undefined : undefined,
         dockerMode: dockerMode() || undefined,
         dockerSource: dockerMode()
           ? projDocker
@@ -1178,6 +1207,19 @@ export function NewTaskPanel(props: NewTaskPanelProps) {
             onSelect={setSelectedAgent}
             wrap={false}
           />
+
+          <Show when={showClaudeOptions()}>
+            <ClaudeLaunchOptions
+              profiles={store.claudeProfiles}
+              profileDir={agentProfileDir()}
+              model={agentModel()}
+              effort={agentEffort()}
+              dockerMode={dockerMode()}
+              onProfileChange={setAgentProfileDir}
+              onModelChange={setAgentModel}
+              onEffortChange={setAgentEffort}
+            />
+          </Show>
 
           <Show when={gitIsolation() === 'direct' && !isNonGitProject()}>
             <InlineBanner color={theme.warning}>

@@ -20,6 +20,7 @@ export {
 export { removeProjectWithTasks } from './project-cleanup';
 export {
   loadAgents,
+  loadClaudeProfiles,
   addAgentToTask,
   closeAgentInTask,
   markAgentExited,

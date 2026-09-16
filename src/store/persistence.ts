@@ -8,6 +8,7 @@ import { randomPastelColor } from './projects';
 import { markAgentSpawned } from './taskStatus';
 import { clampCoordinatorConcurrentTasks } from '../lib/coordinator-limits';
 import { sanitizeAgentEnv } from '../lib/agent-env';
+import { validClaudeEffort, validClaudeModel } from '../lib/agent-profile';
 
 // Hand-edited state files may hold anything; the IPC layer rejects non-integers.
 function restoredMaxConcurrentTasks(value: unknown): number | undefined {
@@ -173,6 +174,9 @@ function toPersistedTask(task: Task, agentDefs: AgentDef[], collapsed?: boolean)
     baseBranch: task.baseBranch,
     externalWorktree: task.externalWorktree,
     skipPermissions: task.skipPermissions,
+    agentProfileDir: task.agentProfileDir,
+    agentModel: task.agentModel,
+    agentEffort: task.agentEffort,
     dockerMode: task.dockerMode,
     dockerSource: task.dockerSource,
     dockerImage: task.dockerImage,
@@ -222,6 +226,9 @@ export async function saveState(): Promise<void> {
     projects: store.projects.map((p) => ({ ...p })),
     lastProjectId: store.lastProjectId,
     lastAgentId: store.lastAgentId,
+    lastAgentProfileDir: store.lastAgentProfileDir,
+    lastAgentModel: store.lastAgentModel,
+    lastAgentEffort: store.lastAgentEffort,
     taskOrder: [...store.taskOrder],
     collapsedTaskOrder: [...store.collapsedTaskOrder],
     tasks: {},
@@ -410,6 +417,9 @@ interface LegacyPersistedState {
   projects?: Project[];
   lastProjectId?: string | null;
   lastAgentId?: string | null;
+  lastAgentProfileDir?: unknown;
+  lastAgentModel?: unknown;
+  lastAgentEffort?: unknown;
   taskOrder: string[];
   collapsedTaskOrder?: string[];
   tasks: Record<string, PersistedTask & { projectId?: string }>;
@@ -496,6 +506,12 @@ export async function loadState(): Promise<void> {
   let projects: Project[] = raw.projects ?? [];
   let lastProjectId: string | null = raw.lastProjectId ?? null;
   const lastAgentId: string | null = raw.lastAgentId ?? null;
+  const lastAgentProfileDir =
+    typeof raw.lastAgentProfileDir === 'string' && raw.lastAgentProfileDir
+      ? raw.lastAgentProfileDir
+      : null;
+  const lastAgentModel = validClaudeModel(raw.lastAgentModel) ?? null;
+  const lastAgentEffort = validClaudeEffort(raw.lastAgentEffort) ?? null;
 
   // Assign colors to projects that don't have one (backward compat)
   // Also migrate defaultDirectMode -> defaultGitIsolation
@@ -541,6 +557,9 @@ export async function loadState(): Promise<void> {
       s.projects = projects;
       s.lastProjectId = lastProjectId;
       s.lastAgentId = lastAgentId;
+      s.lastAgentProfileDir = lastAgentProfileDir;
+      s.lastAgentModel = lastAgentModel;
+      s.lastAgentEffort = lastAgentEffort;
       s.taskOrder = raw.taskOrder;
       s.activeTaskId = raw.activeTaskId;
       s.sidebarVisible = raw.sidebarVisible;
@@ -765,6 +784,12 @@ export async function loadState(): Promise<void> {
           baseBranch: legacy.baseBranch || undefined,
           externalWorktree: pt.externalWorktree,
           skipPermissions: pt.skipPermissions === true,
+          agentProfileDir:
+            typeof pt.agentProfileDir === 'string' && pt.agentProfileDir
+              ? pt.agentProfileDir
+              : undefined,
+          agentModel: validClaudeModel(pt.agentModel),
+          agentEffort: validClaudeEffort(pt.agentEffort),
           dockerMode: pt.dockerMode === true ? true : undefined,
           dockerSource:
             pt.dockerMode === true
@@ -877,6 +902,12 @@ export async function loadState(): Promise<void> {
           baseBranch: legacyCollapsed.baseBranch || undefined,
           externalWorktree: pt.externalWorktree,
           skipPermissions: pt.skipPermissions === true,
+          agentProfileDir:
+            typeof pt.agentProfileDir === 'string' && pt.agentProfileDir
+              ? pt.agentProfileDir
+              : undefined,
+          agentModel: validClaudeModel(pt.agentModel),
+          agentEffort: validClaudeEffort(pt.agentEffort),
           dockerMode: pt.dockerMode === true ? true : undefined,
           dockerSource:
             pt.dockerMode === true

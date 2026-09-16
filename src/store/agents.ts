@@ -2,7 +2,7 @@ import { produce } from 'solid-js/store';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { store, setStore } from './core';
-import type { AgentDef } from '../ipc/types';
+import type { AgentDef, ClaudeProfile } from '../ipc/types';
 import type { Agent } from './types';
 import { refreshTaskStatus, clearAgentActivity, markAgentSpawned } from './taskStatus';
 import { saveState } from './persistence';
@@ -13,6 +13,20 @@ export async function loadAgents(): Promise<void> {
   const custom = store.customAgents;
   const customIds = new Set(custom.map((a) => a.id));
   setStore('availableAgents', [...defaults.filter((d) => !customIds.has(d.id)), ...custom]);
+}
+
+/** Discover the Claude config dirs (`~/.claude`, `~/.claude-<name>`) the New
+ *  Task profile picker offers. Cheap enough to re-run whenever the panel opens,
+ *  so a profile created while the app is running shows up without a restart. */
+export async function loadClaudeProfiles(): Promise<void> {
+  try {
+    const profiles = await invoke<ClaudeProfile[]>(IPC.ListClaudeProfiles);
+    setStore('claudeProfiles', profiles);
+  } catch (err) {
+    // A missing or unreadable home directory is not worth failing startup over;
+    // the picker falls back to the default profile alone.
+    console.warn('[profiles] Could not list Claude profiles:', err);
+  }
 }
 
 export async function addAgentToTask(taskId: string, agentDef: AgentDef): Promise<string | null> {

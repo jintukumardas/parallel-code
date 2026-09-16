@@ -36,6 +36,7 @@ import type { Task } from '../store/types';
 import type { AgentDef } from '../ipc/types';
 import type { PromptInputHandle } from './PromptInput';
 import { buildTaskAgentArgs, isResumeArgsFailure } from '../lib/agent-args';
+import { launchOptionsBadge, taskProfileEnv } from '../lib/agent-profile';
 
 type StepNavApi = { mark: (i: number) => void; jump: (i: number) => boolean };
 
@@ -591,6 +592,9 @@ function AgentTerminalPane(props: {
 
   const dockerOverlayLabel = () => getTaskDockerOverlayLabel(props.task.dockerSource);
   const agent = () => store.agents[props.agentId];
+  // Which profile/model this pane is actually running, so a task started under
+  // the work login is not indistinguishable from one on the default.
+  const launchOptions = () => launchOptionsBadge(props.task, agent()?.def ?? null);
 
   return (
     <div
@@ -622,7 +626,7 @@ function AgentTerminalPane(props: {
         props.onSelect();
       }}
     >
-      <Show when={props.task.dockerMode}>
+      <Show when={props.task.dockerMode || launchOptions()}>
         <div
           style={{
             position: 'absolute',
@@ -640,7 +644,22 @@ function AgentTerminalPane(props: {
             border: `1px solid ${theme.border}`,
           }}
         >
-          <span title={props.task.dockerImage}>{dockerOverlayLabel()}</span>
+          <Show when={props.task.dockerMode}>
+            <span title={props.task.dockerImage}>{dockerOverlayLabel()}</span>
+          </Show>
+          <Show when={props.task.dockerMode && launchOptions()}>
+            <span
+              aria-hidden="true"
+              style={{ width: '1px', 'align-self': 'stretch', background: theme.border }}
+            />
+          </Show>
+          <Show when={launchOptions()}>
+            {(options) => (
+              <span title={options().title} style={{ 'white-space': 'nowrap' }}>
+                {options().label}
+              </span>
+            )}
+          </Show>
         </div>
       </Show>
       <Show when={agent()}>
@@ -704,6 +723,7 @@ function AgentTerminalPane(props: {
                 cwd={props.task.worktreePath}
                 envFile={store.agentEnvFiles[a().def.id]}
                 agentEnv={a().def.env}
+                env={taskProfileEnv(props.task, a().def)}
                 stepsEnabled={props.task.stepsEnabled}
                 dockerMode={
                   props.task.dockerMode ||

@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#1e1e1e" />
+    <meta name="theme-color" content="#12181f" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -28,10 +28,36 @@
         height: 100%;
         overflow: hidden;
       }
+      html,
       body {
-        background: #1e1e1e;
+        /* dvh tracks the visible area as the URL bar and keyboard come and go;
+           plain 100% is the fallback for older WebViews. */
+        height: 100dvh;
+        overscroll-behavior: none;
+      }
+      body {
+        /* Matches the screen headers, so the strip behind the status bar /
+           notch (see #root padding) blends in. */
+        background: #12181f;
         color: #e0e0e0;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        -webkit-text-size-adjust: 100%;
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* viewport-fit=cover plus the translucent status bar put content under
+         the notch in home-screen mode; keep it clear. Bottom insets are
+         handled per screen so their footers can paint behind the home bar. */
+      #root {
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+      }
+      .pc-tap:active {
+        filter: brightness(1.35);
+      }
+      .pc-no-scrollbar {
+        scrollbar-width: none;
+      }
+      .pc-no-scrollbar::-webkit-scrollbar {
+        display: none;
       }
     </style>
   </head>

@@ -198,6 +198,7 @@ export function AgentList(props: AgentListProps) {
             return (
               <div
                 onClick={() => props.onSelect(agent.agentId, agent.taskName)}
+                class="pc-tap"
                 style={{
                   background: '#0f141b',
                   border: display().glow ? `1px solid ${display().color}66` : '1px solid #223040',

@@ -76,6 +76,17 @@ export function AgentDetail(props: AgentDetailProps) {
     else inputDrafts.delete(props.agentId);
   });
   const [atBottom, setAtBottom] = createSignal(true);
+  // True when the rendered columns are wider than the screen, i.e. the user
+  // has to pan sideways to see the rest of each line.
+  const [overflowX, setOverflowX] = createSignal(false);
+  // The "swipe to see full lines" hint covers output, so it goes away after
+  // the first sideways pan or a few seconds, whichever comes first.
+  const [panHintDone, setPanHintDone] = createSignal(false);
+  createEffect(() => {
+    if (!overflowX() || panHintDone()) return;
+    const t = setTimeout(() => setPanHintDone(true), 4000);
+    onCleanup(() => clearTimeout(t));
+  });
   const [termFontSize, setTermFontSize] = createSignal(10);
   // Desktop PTY column count (from scrollback). The mobile client can't resize
   // the PTY, so the terminal must adapt its font to this width, not vice versa.
@@ -102,6 +113,10 @@ export function AgentDetail(props: AgentDetailProps) {
 
   const MIN_FONT = 6;
   const MAX_FONT = 24;
+  // Auto-fit never goes below this: a wide desktop terminal squeezed onto a
+  // phone is unreadable at 6px. Output wider than the screen can be panned
+  // sideways instead; A- still goes down to MIN_FONT for an overview.
+  const AUTO_MIN_FONT = 9;
 
   const agentInfo = () => agents().find((a) => a.agentId === props.agentId);
   const taskId = () => agentInfo()?.taskId;
@@ -119,7 +134,7 @@ export function AgentDetail(props: AgentDetailProps) {
     const perChar = charWidthPerPx();
     if (avail <= 0 || perChar <= 0) return;
     let fs = Math.floor(avail / (cols * perChar));
-    fs = Math.max(MIN_FONT, Math.min(MAX_FONT, fs));
+    fs = Math.max(AUTO_MIN_FONT, Math.min(MAX_FONT, fs));
     if (term.options.fontSize !== fs) {
       term.options.fontSize = fs;
       setTermFontSize(fs);
@@ -138,6 +153,18 @@ export function AgentDetail(props: AgentDetailProps) {
     fitAddon?.fit();
     const cols = serverCols();
     if (cols > 0) term.resize(cols, term.rows);
+    updateOverflow();
+  }
+
+  function updateOverflow(): void {
+    if (!termContainer) return;
+    setOverflowX(termContainer.scrollWidth > termContainer.clientWidth + 1);
+  }
+
+  function resetFit(): void {
+    setManualFont(false);
+    if (termContainer) termContainer.scrollLeft = 0;
+    refit();
   }
 
   function changeFont(delta: number): void {
@@ -231,8 +258,11 @@ export function AgentDetail(props: AgentDetailProps) {
     // Disable xterm helper elements that capture touch events over
     // the header/input areas (not needed since disableStdin is true)
     const style = document.createElement('style');
+    // Also hide xterm's scrollbar: it belongs to the container-width viewport,
+    // so when the terminal is panned sideways it slides over the text.
     style.textContent =
-      '.xterm-helper-textarea, .xterm-composition-view { pointer-events: none !important; }';
+      '.xterm-helper-textarea, .xterm-composition-view { pointer-events: none !important; }' +
+      ' .xterm .xterm-scrollable-element > .xterm-scrollbar { display: none !important; }';
     document.head.appendChild(style);
     onCleanup(() => style.remove());
 
@@ -317,40 +347,113 @@ export function AgentDetail(props: AgentDetailProps) {
     // eslint-disable-next-line solid/reactivity -- promise callback is not a reactive context; refit reads current signal values intentionally
     document.fonts?.ready.then(() => refit()).catch(() => {});
 
-    // Manual touch scrolling for mobile — xterm.js doesn't handle this well
-    let touchStartY = 0;
+    // Manual touch scrolling for mobile — xterm.js doesn't handle this well.
+    // A drag locks to one axis once it moves past a small threshold: vertical
+    // scrolls the terminal buffer (with momentum on release), horizontal pans
+    // across lines wider than the screen. The container is overflow:hidden, so
+    // panning sets scrollLeft directly rather than relying on native scrolling.
+    const AXIS_LOCK_PX = 8;
+    let lastX = 0;
+    let lastY = 0;
+    let lastT = 0;
+    let axis: 'x' | 'y' | null = null;
     let touchActive = false;
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        touchStartY = e.touches[0].clientY;
-        touchActive = true;
+    // Sub-row remainder so slow drags still scroll instead of rounding to 0.
+    let pendingRows = 0;
+    let velocityY = 0; // px per ms, positive = towards older output
+    let momentumRaf = 0;
+
+    const rowHeight = (): number => {
+      const screen = termContainer?.querySelector<HTMLElement>('.xterm-screen');
+      if (term && screen && term.rows > 0 && screen.clientHeight > 0) {
+        return screen.clientHeight / term.rows;
       }
+      return (term?.options.fontSize ?? 13) * 1.2;
+    };
+    const scrollByPx = (dy: number): void => {
+      if (!term) return;
+      pendingRows += dy / rowHeight();
+      const rows = Math.trunc(pendingRows);
+      if (rows !== 0) {
+        term.scrollLines(rows);
+        pendingRows -= rows;
+      }
+    };
+    const stopMomentum = (): void => {
+      cancelAnimationFrame(momentumRaf);
+      momentumRaf = 0;
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      stopMomentum();
+      if (e.touches.length !== 1) {
+        touchActive = false;
+        return;
+      }
+      lastX = e.touches[0].clientX;
+      lastY = e.touches[0].clientY;
+      lastT = performance.now();
+      axis = null;
+      pendingRows = 0;
+      velocityY = 0;
+      touchActive = true;
     };
     const onTouchMove = (e: TouchEvent) => {
-      if (!touchActive || !term || e.touches.length !== 1) return;
-      const dy = touchStartY - e.touches[0].clientY;
-      const lineHeight = term.options.fontSize ?? 13;
-      const lines = Math.trunc(dy / lineHeight);
-      if (lines !== 0) {
-        term.scrollLines(lines);
-        touchStartY = e.touches[0].clientY;
+      if (!touchActive || !term || !termContainer || e.touches.length !== 1) return;
+      const x = e.touches[0].clientX;
+      const y = e.touches[0].clientY;
+      const dx = lastX - x;
+      const dy = lastY - y;
+      if (axis === null) {
+        if (Math.abs(dx) < AXIS_LOCK_PX && Math.abs(dy) < AXIS_LOCK_PX) return;
+        const canPanX = termContainer.scrollWidth > termContainer.clientWidth + 1;
+        axis = canPanX && Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
       }
       e.preventDefault();
+      const now = performance.now();
+      if (axis === 'x') {
+        termContainer.scrollLeft += dx;
+        setPanHintDone(true);
+      } else {
+        scrollByPx(dy);
+        const dt = Math.max(1, now - lastT);
+        // Smooth the velocity a little so one jittery sample doesn't dominate.
+        velocityY = 0.8 * (dy / dt) + 0.2 * velocityY;
+      }
+      lastX = x;
+      lastY = y;
+      lastT = now;
     };
     const onTouchEnd = () => {
+      if (!touchActive) return;
       touchActive = false;
+      // A finger that stopped before lifting shouldn't fling.
+      if (axis !== 'y' || performance.now() - lastT > 100) return;
+      let v = velocityY;
+      let prev = performance.now();
+      const step = (now: number) => {
+        const dt = now - prev;
+        prev = now;
+        scrollByPx(v * dt);
+        v *= Math.pow(0.95, dt / 16);
+        momentumRaf = Math.abs(v) > 0.02 ? requestAnimationFrame(step) : 0;
+      };
+      if (Math.abs(v) > 0.1) momentumRaf = requestAnimationFrame(step);
     };
     termContainer.addEventListener('touchstart', onTouchStart, { passive: true });
     termContainer.addEventListener('touchmove', onTouchMove, { passive: false });
     termContainer.addEventListener('touchend', onTouchEnd, { passive: true });
+    termContainer.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
     onCleanup(() => {
       termContainer.removeEventListener('touchstart', onTouchStart);
       termContainer.removeEventListener('touchmove', onTouchMove);
       termContainer.removeEventListener('touchend', onTouchEnd);
+      termContainer.removeEventListener('touchcancel', onTouchEnd);
       observer.disconnect();
-      // Cancel any queued refit so it can't run against the disposed terminal.
+      // Cancel any queued refit/fling so it can't run against the disposed terminal.
       cancelAnimationFrame(resizeRaf);
+      stopMomentum();
       unsubscribeAgent(props.agentId);
       cleanupScrollback();
       cleanupOutput();
@@ -423,8 +526,8 @@ export function AgentDetail(props: AgentDetailProps) {
         style={{
           display: 'flex',
           'align-items': 'center',
-          gap: '10px',
-          padding: '10px 14px',
+          gap: '6px',
+          padding: '8px 14px',
           'border-bottom': '1px solid #223040',
           'flex-shrink': '0',
           position: 'relative',
@@ -434,24 +537,31 @@ export function AgentDetail(props: AgentDetailProps) {
       >
         <button
           onClick={() => props.onBack()}
+          aria-label="Back to tasks"
+          class="pc-tap"
           style={{
             background: 'none',
             border: 'none',
             color: '#2ec8ff',
-            'font-size': '17px',
+            'font-size': '22px',
+            'line-height': '1',
             cursor: 'pointer',
-            padding: '8px 10px',
+            'min-width': '44px',
+            'min-height': '44px',
+            margin: '-6px 0 -6px -8px',
+            'flex-shrink': '0',
             'touch-action': 'manipulation',
           }}
         >
-          &#8592; Back
+          &#8592;
         </button>
         <span
           style={{
-            'font-size': '15px',
+            'font-size': '16px',
             'font-weight': '500',
             color: '#d7e4f0',
             flex: '1',
+            'min-width': '0',
             overflow: 'hidden',
             'text-overflow': 'ellipsis',
             'white-space': 'nowrap',
@@ -558,16 +668,75 @@ export function AgentDetail(props: AgentDetailProps) {
            capture touch events over the header/input areas. Kept mounted (hidden,
            not unmounted) when the Notes tab is active so output keeps streaming. */}
       <div
-        ref={termContainer}
         style={{
           flex: '1',
           'min-height': '0',
-          padding: '4px',
           position: 'relative',
-          overflow: 'hidden',
-          display: view() === 'terminal' ? 'block' : 'none',
+          display: view() === 'terminal' ? 'flex' : 'none',
+          'flex-direction': 'column',
         }}
-      />
+      >
+        <div
+          ref={termContainer}
+          style={{
+            flex: '1',
+            'min-height': '0',
+            padding: '4px',
+            position: 'relative',
+            overflow: 'hidden',
+          }}
+        />
+
+        {/* Lines are wider than the screen: tell the user they can pan. */}
+        <Show when={overflowX() && !panHintDone()}>
+          <div
+            style={{
+              position: 'absolute',
+              top: '6px',
+              right: '8px',
+              padding: '3px 8px',
+              'border-radius': '999px',
+              background: '#12181fcc',
+              border: '1px solid #223040',
+              color: '#9bb0c3',
+              'font-size': '11px',
+              'pointer-events': 'none',
+              'z-index': '5',
+            }}
+          >
+            &#8596; swipe to see full lines
+          </div>
+        </Show>
+
+        {/* Scroll to bottom FAB */}
+        <Show when={!atBottom()}>
+          <button
+            onClick={scrollToBottom}
+            aria-label="Scroll to latest output"
+            class="pc-tap"
+            style={{
+              position: 'absolute',
+              bottom: '12px',
+              right: '12px',
+              width: '44px',
+              height: '44px',
+              'border-radius': '50%',
+              background: '#12181f',
+              border: '1px solid #2ec8ff55',
+              color: '#d7e4f0',
+              'font-size': '18px',
+              cursor: 'pointer',
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'center',
+              'z-index': '10',
+              'touch-action': 'manipulation',
+            }}
+          >
+            &#8595;
+          </button>
+        </Show>
+      </div>
 
       {/* Notes editor */}
       <Show when={view() === 'notes'}>
@@ -663,33 +832,6 @@ export function AgentDetail(props: AgentDetailProps) {
         </div>
       </Show>
 
-      {/* Scroll to bottom FAB */}
-      <Show when={view() === 'terminal' && !atBottom()}>
-        <button
-          onClick={scrollToBottom}
-          style={{
-            position: 'absolute',
-            bottom: '140px',
-            right: '16px',
-            width: '40px',
-            height: '40px',
-            'border-radius': '50%',
-            background: '#12181f',
-            border: '1px solid #223040',
-            color: '#d7e4f0',
-            'font-size': '17px',
-            cursor: 'pointer',
-            display: 'flex',
-            'align-items': 'center',
-            'justify-content': 'center',
-            'z-index': '10',
-            'touch-action': 'manipulation',
-          }}
-        >
-          &#8595;
-        </button>
-      </Show>
-
       {/* Input area */}
       <div
         style={{
@@ -780,7 +922,16 @@ export function AgentDetail(props: AgentDetailProps) {
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
+        {/* One swipeable row so the keys never wrap and eat terminal height. */}
+        <div
+          class="pc-no-scrollbar"
+          style={{
+            display: 'flex',
+            gap: '6px',
+            'overflow-x': 'auto',
+            'touch-action': 'pan-x',
+          }}
+        >
           <For
             each={[
               { label: 'Enter', data: () => key(13) },
@@ -792,7 +943,9 @@ export function AgentDetail(props: AgentDetailProps) {
             {(action) => (
               <button
                 onClick={() => handleQuickAction(action.data())}
+                class="pc-tap"
                 style={{
+                  'flex-shrink': '0',
                   background: '#1a2430',
                   border: '1px solid #223040',
                   'border-radius': '8px',
@@ -809,9 +962,30 @@ export function AgentDetail(props: AgentDetailProps) {
               </button>
             )}
           </For>
-          <div style={{ 'margin-left': 'auto', display: 'flex', gap: '6px' }}>
+          <div style={{ 'margin-left': 'auto', display: 'flex', gap: '6px', 'flex-shrink': '0' }}>
+            <Show when={manualFont()}>
+              <button
+                onClick={resetFit}
+                class="pc-tap"
+                style={{
+                  background: '#1a2430',
+                  border: '1px solid #223040',
+                  'border-radius': '8px',
+                  padding: '10px 12px',
+                  color: '#2ec8ff',
+                  'font-size': '14px',
+                  'font-family': "'JetBrains Mono', 'Courier New', monospace",
+                  cursor: 'pointer',
+                  'touch-action': 'manipulation',
+                }}
+                title="Fit terminal to screen width"
+              >
+                Fit
+              </button>
+            </Show>
             <button
               onClick={() => changeFont(-1)}
+              class="pc-tap"
               disabled={termFontSize() <= MIN_FONT}
               style={{
                 background: '#1a2430',
@@ -832,6 +1006,7 @@ export function AgentDetail(props: AgentDetailProps) {
             </button>
             <button
               onClick={() => changeFont(1)}
+              class="pc-tap"
               disabled={termFontSize() >= MAX_FONT}
               style={{
                 background: '#1a2430',

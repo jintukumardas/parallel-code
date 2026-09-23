@@ -37,6 +37,13 @@ interface PtySession {
 
 const sessions = new Map<string, PtySession>();
 
+// Raw PTY bytes kept per session and replayed when a view (re)attaches: the
+// desktop after a reload, a phone when it opens the task. Agent TUIs emit far
+// more escape codes than text, so 64 KB held barely a screen of readable
+// output; 1 MB keeps a useful history. Buffer.alloc zero-fills lazily, so an
+// idle session costs little until it produces that much output.
+const PTY_REPLAY_BYTES = 1024 * 1024;
+
 function sendToChannel(win: BrowserWindow, channelId: string, msg: unknown): void {
   if (!win.isDestroyed()) {
     win.webContents.send(`channel:${channelId}`, msg);
@@ -610,7 +617,7 @@ export function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): void {
     isShell: args.isShell ?? false,
     flushTimer: null,
     subscribers: new Set(),
-    scrollback: new RingBuffer(),
+    scrollback: new RingBuffer(PTY_REPLAY_BYTES),
     containerName: spawnSpec.containerName,
   };
   sessions.set(args.agentId, session);
@@ -725,6 +732,12 @@ export function getAgentMeta(
 ): { taskId: string; agentId: string; isShell: boolean } | null {
   const s = sessions.get(agentId);
   return s ? { taskId: s.taskId, agentId: s.agentId, isShell: s.isShell } : null;
+}
+
+/** Return the current row count of an agent's PTY. */
+export function getAgentRows(agentId: string): number {
+  const s = sessions.get(agentId);
+  return s ? s.proc.rows : 24;
 }
 
 /** Return the current column width of an agent's PTY. */

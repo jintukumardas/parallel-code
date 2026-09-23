@@ -42,4 +42,13 @@ describe('agentStatusDisplay', () => {
     // An errored task that also exited should read as "Error", not "Exited".
     expect(agentStatusDisplay({ status: 'exited', attention: 'error' }).label).toBe('Error');
   });
+
+  it('labels standalone terminals as terminals, not idle agents', () => {
+    expect(
+      agentStatusDisplay({ status: 'running', attention: 'idle', kind: 'terminal' }).label,
+    ).toBe('Terminal');
+    expect(
+      agentStatusDisplay({ status: 'exited', attention: 'idle', kind: 'terminal' }).label,
+    ).toBe('Exited');
+  });
 });

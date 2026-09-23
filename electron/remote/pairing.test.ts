@@ -15,6 +15,7 @@ vi.mock('../ipc/pty.js', () => ({
   getActiveAgentIds: vi.fn(() => []),
   getAgentMeta: vi.fn(() => null),
   getAgentCols: vi.fn(() => 80),
+  getAgentRows: vi.fn(() => 24),
   onPtyEvent: vi.fn(() => vi.fn()),
 }));
 
@@ -23,6 +24,7 @@ vi.mock('./protocol.js', () => ({
 }));
 
 const { startRemoteServer, toFriendlyListenError } = await import('./server.js');
+const pty = await import('../ipc/pty.js');
 
 type Resp = { status: number; json: () => Promise<unknown> };
 
@@ -32,6 +34,7 @@ let mobileToken = '';
 let generatePin: () => { pin: string; expiresAt: number };
 const createTaskFromMobile = vi.fn(async () => ({ taskId: 'task-123' }));
 const getProjects = vi.fn(async () => [{ id: 'proj-1', name: 'Repo One' }]);
+const createTerminalFromMobile = vi.fn(async () => ({ terminalId: 'term-1', agentId: 'agent-t1' }));
 
 function req(method: string, path: string, token: string, body?: unknown): Promise<Resp> {
   return new Promise((resolve, reject) => {
@@ -68,6 +71,7 @@ async function pair(): Promise<string> {
 beforeEach(async () => {
   createTaskFromMobile.mockClear();
   getProjects.mockClear();
+  createTerminalFromMobile.mockClear();
   const srv = await startRemoteServer({
     port: 0,
     host: '127.0.0.1',
@@ -77,6 +81,8 @@ beforeEach(async () => {
     getCoordinator: () => null,
     getProjects,
     createTaskFromMobile,
+    createTerminalFromMobile,
+    getTerminalName: (id) => (id === 'term-1' ? 'Terminal 1' : undefined),
   });
   port = srv.port;
   stop = srv.stop;
@@ -175,6 +181,40 @@ describe('paired-mobile routes', () => {
       (await req('POST', '/api/mobile/tasks', paired, { name: 'n', prompt: 'x' })).status,
     ).toBe(400);
     expect(createTaskFromMobile).not.toHaveBeenCalled();
+  });
+
+  it('only a paired token can open a terminal', async () => {
+    expect((await req('POST', '/api/mobile/terminals', mobileToken)).status).toBe(403);
+    expect(createTerminalFromMobile).not.toHaveBeenCalled();
+
+    const paired = await pair();
+    const res = await req('POST', '/api/mobile/terminals', paired);
+    expect(res.status).toBe(201);
+    expect(await res.json()).toEqual({ terminalId: 'term-1', agentId: 'agent-t1' });
+    expect(createTerminalFromMobile).toHaveBeenCalledOnce();
+  });
+
+  it('lists standalone terminals but not task sub-shells', async () => {
+    const metas: Record<string, { taskId: string; agentId: string; isShell: boolean }> = {
+      'agent-main': { taskId: 'task-1', agentId: 'agent-main', isShell: false },
+      'agent-sub': { taskId: 'task-1', agentId: 'agent-sub', isShell: true },
+      'agent-t1': { taskId: 'term-1', agentId: 'agent-t1', isShell: true },
+    };
+    vi.mocked(pty.getActiveAgentIds).mockReturnValue(Object.keys(metas));
+    vi.mocked(pty.getAgentMeta).mockImplementation((id: string) => metas[id] ?? null);
+    try {
+      const res = await req('GET', '/api/agents', mobileToken);
+      const list = (await res.json()) as { agentId: string; taskName: string; kind?: string }[];
+      expect(list.map((a) => a.agentId).sort()).toEqual(['agent-main', 'agent-t1']);
+      expect(list.find((a) => a.agentId === 'agent-t1')).toMatchObject({
+        taskName: 'Terminal 1',
+        kind: 'terminal',
+      });
+      expect(list.find((a) => a.agentId === 'agent-main')?.kind).toBeUndefined();
+    } finally {
+      vi.mocked(pty.getActiveAgentIds).mockReturnValue([]);
+      vi.mocked(pty.getAgentMeta).mockReturnValue(null);
+    }
   });
 
   it('paired token still has read-only agent access', async () => {

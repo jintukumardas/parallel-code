@@ -1,6 +1,6 @@
 // REST helpers for the mobile SPA. Data flows over the WebSocket (see ws.ts);
-// these cover the request/response actions: pairing, task creation, and
-// reading/saving task notes.
+// these cover the request/response actions: pairing, task and terminal
+// creation, and reading/saving task notes.
 
 import { getToken, getPairedToken } from './auth';
 
@@ -75,6 +75,18 @@ export async function createTask(input: {
     token,
   });
   return r.taskId;
+}
+
+/** Open a standalone terminal on the desktop. Requires a paired token. Returns
+ *  the new terminal's agent id, which appears in the agent list once its shell
+ *  has started. */
+export async function createTerminal(): Promise<{ terminalId: string; agentId: string }> {
+  const token = getPairedToken();
+  if (!token) throw new ApiError('Not paired', 401);
+  return request<{ terminalId: string; agentId: string }>('/api/mobile/terminals', {
+    method: 'POST',
+    token,
+  });
 }
 
 /** Fetch the notes for a task. Works with the base connection token. */

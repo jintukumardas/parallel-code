@@ -7,6 +7,7 @@
 import { store } from './core';
 import { codeProjects } from './projects';
 import { createTask, updateTaskNotes } from './tasks';
+import { createTerminal } from './terminals';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { resolveSkipPermissionsArgs } from '../../electron/shared/skip-permissions';
@@ -120,6 +121,17 @@ export function isKnownTask(tasks: Record<string, unknown>, taskId: string): boo
   return Object.hasOwn(tasks, taskId);
 }
 
+function handleCreateTerminal(req: RendererRequest): void {
+  // Same path as the desktop "New terminal" button; its PTY spawns once the
+  // panel mounts, and the phone waits for it to appear in the agent list.
+  const terminal = createTerminal();
+  if (!terminal) {
+    reply(req.reqId, false, undefined, 'A terminal was just opened; try again');
+    return;
+  }
+  reply(req.reqId, true, { terminalId: terminal.id, agentId: terminal.agentId });
+}
+
 function handleGetNotes(req: GetNotesRequest): void {
   if (!isKnownTask(store.tasks, req.taskId)) {
     reply(req.reqId, false, undefined, 'Task not found');
@@ -137,7 +149,8 @@ function handleSetNotes(req: SetNotesRequest): void {
   reply(req.reqId, true, { ok: true });
 }
 
-/** Subscribe to mobile task-creation requests. Returns an unsubscribe fn. */
+/** Subscribe to mobile task/terminal-creation and notes requests. Returns an
+ *  unsubscribe fn. */
 export function startRemoteTaskHandlers(): () => void {
   const offProjects = window.electron.ipcRenderer.on(
     IPC.Remote_GetProjectsRequest,
@@ -149,6 +162,12 @@ export function startRemoteTaskHandlers(): () => void {
     IPC.Remote_CreateTaskRequest,
     (data: unknown) => {
       if (data && typeof data === 'object') void handleCreateTask(data as CreateTaskRequest);
+    },
+  );
+  const offCreateTerminal = window.electron.ipcRenderer.on(
+    IPC.Remote_CreateTerminalRequest,
+    (data: unknown) => {
+      if (data && typeof data === 'object') handleCreateTerminal(data as RendererRequest);
     },
   );
   const offGetNotes = window.electron.ipcRenderer.on(
@@ -166,6 +185,7 @@ export function startRemoteTaskHandlers(): () => void {
   return () => {
     offProjects();
     offCreate();
+    offCreateTerminal();
     offGetNotes();
     offSetNotes();
   };

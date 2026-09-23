@@ -1,5 +1,5 @@
 // Pushes the desktop's per-task attention state (working, needs input, ready,
-// error, …) to the main process so the mobile overview can show the same
+// error, …) and the open standalone terminals to the main process so the mobile overview can show the same
 // richer status instead of just running/exited. The renderer owns this
 // computation because it depends on reactive terminal/git/steps state; main
 // simply caches the latest snapshot and re-broadcasts it to connected phones.
@@ -38,10 +38,16 @@ export function startRemoteStatusSync(): () => void {
         statuses[taskId] = getTaskAttentionState(taskId);
       }
 
-      const serialized = JSON.stringify(statuses);
+      // Standalone terminals ride along so phones can list and open them.
+      const terminals: Record<string, string> = {};
+      for (const t of Object.values(store.terminals)) {
+        if (!t.closingStatus) terminals[t.id] = t.name;
+      }
+
+      const serialized = JSON.stringify([statuses, terminals]);
       if (serialized === lastSerialized) return;
       lastSerialized = serialized;
-      fireAndForget(IPC.Remote_UpdateTaskStatus, { statuses });
+      fireAndForget(IPC.Remote_UpdateTaskStatus, { statuses, terminals });
     });
 
     return dispose;

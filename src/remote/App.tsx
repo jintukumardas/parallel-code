@@ -1,6 +1,7 @@
 import { createSignal, onMount, onCleanup, Show, Switch, Match } from 'solid-js';
-import { initAuth, getPairedToken } from './auth';
-import { connect, reconnect } from './ws';
+import { initAuth, getPairedToken, clearPairedToken } from './auth';
+import { connect, reconnect, agents } from './ws';
+import { createTerminal, ApiError } from './api';
 import { AgentList } from './AgentList';
 import { AgentDetail } from './AgentDetail';
 import { ConnectScreen } from './ConnectScreen';
@@ -27,9 +28,11 @@ export function App() {
   const [view, setView] = createSignal<View>('list');
   const [detailAgentId, setDetailAgentId] = createSignal('');
   const [detailTaskName, setDetailTaskName] = createSignal('');
-  // Where to land after pairing: the New Task form, or back to the agent the
-  // user was about to type into.
-  const [afterPairing, setAfterPairing] = createSignal<View>('newtask');
+  // Where to land after pairing: the New Task form, back to the agent the
+  // user was about to type into, or on to opening a new terminal.
+  const [afterPairing, setAfterPairing] = createSignal<View | 'terminal'>('newtask');
+  const [openingTerminal, setOpeningTerminal] = createSignal(false);
+  const [terminalError, setTerminalError] = createSignal<string | null>(null);
 
   // Mirror views into browser history so the system back gesture (Android
   // back, iOS edge swipe) returns to the task list instead of leaving the
@@ -94,11 +97,58 @@ export function App() {
     navigate('pair');
   }
 
+  // Opening a terminal needs the paired token too. The desktop spawns the
+  // shell once its panel mounts, so wait for it to show up in the agent list
+  // before opening it.
+  async function openNewTerminal() {
+    if (openingTerminal()) return;
+    if (!getPairedToken()) {
+      setAfterPairing('terminal');
+      navigate('pair');
+      return;
+    }
+    setOpeningTerminal(true);
+    setTerminalError(null);
+    try {
+      const { agentId } = await createTerminal();
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const agent = agents().find((a) => a.agentId === agentId);
+        if (agent) {
+          if (view() === 'list') selectAgent(agent.agentId, agent.taskName);
+          return;
+        }
+        if (Date.now() > deadline) {
+          setTerminalError('Terminal opened on the desktop, but it has not started yet.');
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 150));
+      }
+    } catch (e) {
+      // 401/403: stale paired token (desktop restarted); pair again.
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        clearPairedToken();
+        setAfterPairing('terminal');
+        navigate('pair');
+        return;
+      }
+      setTerminalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpeningTerminal(false);
+    }
+  }
+
   // A fresh paired token must also reach the socket, which authenticated with
   // whichever token it had at connect time.
   function onPaired() {
     reconnect();
-    navigate(afterPairing());
+    const next = afterPairing();
+    if (next === 'terminal') {
+      navigate('list');
+      void openNewTerminal();
+    } else {
+      navigate(next);
+    }
   }
 
   function onConnected() {
@@ -113,7 +163,17 @@ export function App() {
 
   return (
     <Show when={authed()} fallback={<ConnectScreen onConnected={onConnected} />}>
-      <Switch fallback={<AgentList onSelect={selectAgent} onNewTask={startNewTask} />}>
+      <Switch
+        fallback={
+          <AgentList
+            onSelect={selectAgent}
+            onNewTask={startNewTask}
+            onNewTerminal={() => void openNewTerminal()}
+            openingTerminal={openingTerminal()}
+            terminalError={terminalError()}
+          />
+        }
+      >
         <Match when={view() === 'detail'}>
           <AgentDetail
             agentId={detailAgentId()}

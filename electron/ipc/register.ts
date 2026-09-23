@@ -424,6 +424,9 @@ export function registerAllHandlers(win: BrowserWindow): void {
   // the same richer status as the desktop. The renderer owns this computation
   // (it depends on reactive terminal/git/steps state), so main just caches it.
   const taskAttention = new Map<string, RemoteAttentionState>();
+  // Open standalone terminals (id -> display name), pushed by the renderer
+  // alongside task attention, so phones can list them like tasks.
+  const standaloneTerminals = new Map<string, string>();
 
   // --- MCP coordinator (lazy — only loaded when coordinator mode is enabled) ---
   type CoordinatorType = import('../mcp/coordinator.js').Coordinator;
@@ -1269,6 +1272,9 @@ export function registerAllHandlers(win: BrowserWindow): void {
     getProjects: () => callRenderer<RemoteProject[]>(IPC.Remote_GetProjectsRequest, {}),
     createTaskFromMobile: (req: { projectId: string; name: string; prompt: string }) =>
       callRenderer<{ taskId: string }>(IPC.Remote_CreateTaskRequest, req),
+    createTerminalFromMobile: () =>
+      callRenderer<{ terminalId: string; agentId: string }>(IPC.Remote_CreateTerminalRequest, {}),
+    getTerminalName: (terminalId: string) => standaloneTerminals.get(terminalId),
     getTaskNotes: (taskId: string) =>
       callRenderer<{ notes: string }>(IPC.Remote_GetNotesRequest, { taskId }).then((r) => r.notes),
     setTaskNotes: (taskId: string, notes: string) =>
@@ -1285,21 +1291,32 @@ export function registerAllHandlers(win: BrowserWindow): void {
     'review',
   ]);
 
-  // Renderer pushes the full per-task attention snapshot whenever it changes.
-  // We replace the cache and re-broadcast the agent list so connected phones
-  // update immediately (attention changes don't fire PTY spawn/exit events).
-  ipcMain.handle(IPC.Remote_UpdateTaskStatus, (_e, args: { statuses?: Record<string, string> }) => {
-    const statuses = args?.statuses;
-    if (!statuses || typeof statuses !== 'object') return;
-    taskAttention.clear();
-    for (const [taskId, value] of Object.entries(statuses)) {
-      if (typeof taskId === 'string' && VALID_ATTENTION.has(value as RemoteAttentionState)) {
-        taskAttention.set(taskId, value as RemoteAttentionState);
+  // Renderer pushes the full per-task attention snapshot (and the open
+  // standalone terminals) whenever it changes. We replace the caches and
+  // re-broadcast the agent list so connected phones update immediately
+  // (attention changes don't fire PTY spawn/exit events).
+  ipcMain.handle(
+    IPC.Remote_UpdateTaskStatus,
+    (_e, args: { statuses?: Record<string, string>; terminals?: Record<string, string> }) => {
+      const statuses = args?.statuses;
+      if (!statuses || typeof statuses !== 'object') return;
+      taskAttention.clear();
+      for (const [taskId, value] of Object.entries(statuses)) {
+        if (typeof taskId === 'string' && VALID_ATTENTION.has(value as RemoteAttentionState)) {
+          taskAttention.set(taskId, value as RemoteAttentionState);
+        }
       }
-    }
-    // Only bother rebroadcasting when a phone could be listening.
-    if (remoteServer) notifyAgentListChanged();
-  });
+      standaloneTerminals.clear();
+      const terminals = args?.terminals;
+      if (terminals && typeof terminals === 'object') {
+        for (const [terminalId, name] of Object.entries(terminals)) {
+          if (typeof name === 'string') standaloneTerminals.set(terminalId, name);
+        }
+      }
+      // Only bother rebroadcasting when a phone could be listening.
+      if (remoteServer) notifyAgentListChanged();
+    },
+  );
 
   ipcMain.handle(IPC.GeneratePairingPin, () => {
     if (!remoteServer) throw new Error('Remote server is not running');

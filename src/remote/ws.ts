@@ -8,7 +8,7 @@ const [agents, setAgents] = createSignal<RemoteAgent[]>([]);
 const [status, setStatus] = createSignal<ConnectionStatus>('disconnected');
 
 type OutputListener = (data: string) => void;
-type ScrollbackListener = (data: string, cols: number) => void;
+type ScrollbackListener = (data: string, cols: number, rows: number) => void;
 const outputListeners = new Map<string, Set<OutputListener>>();
 const scrollbackListeners = new Map<string, Set<ScrollbackListener>>();
 
@@ -85,7 +85,7 @@ export function connect(): void {
 
       case 'scrollback': {
         const listeners = scrollbackListeners.get(msg.agentId);
-        listeners?.forEach((fn) => fn(msg.data, msg.cols));
+        listeners?.forEach((fn) => fn(msg.data, msg.cols, msg.rows ?? 0));
         break;
       }
 

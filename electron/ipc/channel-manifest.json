@@ -83,6 +83,7 @@
   "GeneratePairingPin": "generate_pairing_pin",
   "Remote_GetProjectsRequest": "remote_get_projects_request",
   "Remote_CreateTaskRequest": "remote_create_task_request",
+  "Remote_CreateTerminalRequest": "remote_create_terminal_request",
   "Remote_GetNotesRequest": "remote_get_notes_request",
   "Remote_SetNotesRequest": "remote_set_notes_request",
   "Remote_UpdateTaskStatus": "remote_update_task_status",

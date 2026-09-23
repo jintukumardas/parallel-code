@@ -13,6 +13,8 @@ import { reconnect, socketCanType } from './ws';
 const inputDrafts = new Map<string, string>();
 const notesDrafts = new Map<string, string>();
 import { agentStatusDisplay } from './attention';
+import { OutputView } from './OutputView';
+import { BufferReader, type OutputLine } from './terminalText';
 import {
   subscribeAgent,
   unsubscribeAgent,
@@ -46,6 +48,29 @@ function charWidthPerPx(): number {
   ctx.font = `100px ${TERM_FONT_FAMILY}`;
   // Average over a run of glyphs to smooth out sub-pixel rounding.
   return ctx.measureText('MMMMMMMMMM').width / 10 / 100;
+}
+
+const OUTPUT_FONT_KEY = 'parallel-code-output-font';
+const OUTPUT_MIN_FONT = 10;
+const OUTPUT_MAX_FONT = 22;
+const OUTPUT_DEFAULT_FONT = 14;
+
+function loadOutputFont(): number {
+  try {
+    const n = Number(localStorage.getItem(OUTPUT_FONT_KEY));
+    if (n >= OUTPUT_MIN_FONT && n <= OUTPUT_MAX_FONT) return n;
+  } catch {
+    /* storage unavailable (private mode) — use the default */
+  }
+  return OUTPUT_DEFAULT_FONT;
+}
+
+function saveOutputFont(size: number): void {
+  try {
+    localStorage.setItem(OUTPUT_FONT_KEY, String(size));
+  } catch {
+    /* storage unavailable — the size just won't persist */
+  }
 }
 
 interface AgentDetailProps {
@@ -91,11 +116,16 @@ export function AgentDetail(props: AgentDetailProps) {
   // Desktop PTY column count (from scrollback). The mobile client can't resize
   // the PTY, so the terminal must adapt its font to this width, not vice versa.
   const [serverCols, setServerCols] = createSignal(0);
+  // Desktop PTY rows. The emulator mirrors the desktop grid while the Output
+  // view is showing so cursor-positioned redraws land where the agent meant.
+  const [serverRows, setServerRows] = createSignal(0);
   // Once the user picks a font with A-/A+, stop auto-fitting so their choice sticks.
   const [manualFont, setManualFont] = createSignal(false);
 
   // Notes editing
-  const [view, setView] = createSignal<'terminal' | 'notes'>('terminal');
+  // Output: chat-style wrapped text (default). Terminal: the raw grid, for TUI
+  // menus that need it. Notes: the task's notes.
+  const [view, setView] = createSignal<'output' | 'terminal' | 'notes'>('output');
   // eslint-disable-next-line solid/reactivity -- initial value only; the draft map is re-read on each mount
   const notesDraft = notesDrafts.get(props.agentId);
   const [notesText, setNotesText] = createSignal(notesDraft ?? '');
@@ -118,7 +148,32 @@ export function AgentDetail(props: AgentDetailProps) {
   // sideways instead; A- still goes down to MIN_FONT for an overview.
   const AUTO_MIN_FONT = 9;
 
+  // Output view text, read from the emulator's buffer after each write.
+  const reader = new BufferReader();
+  const [outputLines, setOutputLines] = createSignal<OutputLine[]>([]);
+  const [outputFont, setOutputFont] = createSignal(loadOutputFont());
+  const [outputAtBottom, setOutputAtBottom] = createSignal(true);
+  const [outputJump, setOutputJump] = createSignal(0);
+  let readTimer: ReturnType<typeof setTimeout> | undefined;
+  // Throttled: streaming output can arrive many times a second.
+  function scheduleRead(): void {
+    if (readTimer !== undefined) return;
+    readTimer = setTimeout(() => {
+      readTimer = undefined;
+      if (term) setOutputLines(reader.read(term));
+    }, 120);
+  }
+
+  // Landscape phones have ~350px of height; drop the quick-key row there so
+  // the output keeps most of the screen.
+  const compactQuery = window.matchMedia('(max-height: 500px)');
+  const [compact, setCompact] = createSignal(compactQuery.matches);
+  const onCompactChange = (e: MediaQueryListEvent) => setCompact(e.matches);
+  compactQuery.addEventListener('change', onCompactChange);
+  onCleanup(() => compactQuery.removeEventListener('change', onCompactChange));
+
   const agentInfo = () => agents().find((a) => a.agentId === props.agentId);
+  const isTerminal = () => agentInfo()?.kind === 'terminal';
   const taskId = () => agentInfo()?.taskId;
 
   // Pick the largest font (within bounds) that fits `serverCols` columns into the
@@ -147,12 +202,20 @@ export function AgentDetail(props: AgentDetailProps) {
   // only the font size changes. In auto mode autoFitFont picks the font that
   // makes serverCols fill the width; in manual mode it no-ops and keeps the
   // user's chosen font (so a larger font simply shows fewer visible columns).
+  //
+  // Only while the Terminal view is on screen: fitting a hidden container
+  // measures 0px and would squash the emulator to a single row, wrecking the
+  // buffer. Otherwise the emulator mirrors the desktop's rows too.
   function refit(): void {
-    if (!term) return;
-    autoFitFont(); // no-op while manualFont() is true
-    fitAddon?.fit();
-    const cols = serverCols();
-    if (cols > 0) term.resize(cols, term.rows);
+    if (!term || !termContainer) return;
+    const showing = view() === 'terminal' && termContainer.clientHeight > 0;
+    if (showing) {
+      autoFitFont(); // no-op while manualFont() is true
+      fitAddon?.fit();
+    }
+    const cols = serverCols() || term.cols;
+    const rows = showing ? term.rows : serverRows() || term.rows;
+    if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
     updateOverflow();
   }
 
@@ -167,7 +230,19 @@ export function AgentDetail(props: AgentDetailProps) {
     refit();
   }
 
+  // A-/A+ size whichever view is showing.
+  const atMinFont = () =>
+    view() === 'output' ? outputFont() <= OUTPUT_MIN_FONT : termFontSize() <= MIN_FONT;
+  const atMaxFont = () =>
+    view() === 'output' ? outputFont() >= OUTPUT_MAX_FONT : termFontSize() >= MAX_FONT;
+
   function changeFont(delta: number): void {
+    if (view() === 'output') {
+      const size = Math.max(OUTPUT_MIN_FONT, Math.min(OUTPUT_MAX_FONT, outputFont() + delta));
+      setOutputFont(size);
+      saveOutputFont(size);
+      return;
+    }
     const next = Math.max(MIN_FONT, Math.min(MAX_FONT, termFontSize() + delta));
     if (next === termFontSize()) return;
     setManualFont(true);
@@ -284,6 +359,11 @@ export function AgentDetail(props: AgentDetailProps) {
     term.loadAddon(fitAddon);
     term.open(termContainer);
     fitAddon.fit();
+    // A resize reflows the whole buffer, so cached rows are stale.
+    term.onResize(() => {
+      reader.reset();
+      scheduleRead();
+    });
 
     term.onScroll(() => {
       if (!term) return;
@@ -292,18 +372,22 @@ export function AgentDetail(props: AgentDetailProps) {
     });
 
     // eslint-disable-next-line solid/reactivity -- output subscription is not a reactive context; refit reads current signal values intentionally
-    const cleanupScrollback = onScrollback(props.agentId, (data, cols) => {
+    const cleanupScrollback = onScrollback(props.agentId, (data, cols, rows) => {
       if (cols > 0) setServerCols(cols);
+      if (rows > 0) setServerRows(rows);
       // Fit the font/geometry to the desktop's column count so the terminal
       // fills the available width.
       refit();
-      // Clear before writing — on reconnect the server re-sends the full
+      // Reset before writing — on reconnect the server re-sends the full
       // scrollback buffer, so we must avoid duplicate content.
-      term?.clear();
+      term?.reset();
+      reader.reset();
       const bytes = base64ToUint8Array(data);
       term?.write(bytes, () => {
         const t = term;
         if (!t) return;
+        setOutputLines(reader.read(t));
+        setOutputJump((n) => n + 1);
         t.scrollToBottom();
         // Force a repaint of the just-written scrollback. On a freshly-opened
         // task the replayed buffer can stay blank until the next live output:
@@ -323,7 +407,7 @@ export function AgentDetail(props: AgentDetailProps) {
 
     const cleanupOutput = onOutput(props.agentId, (data) => {
       const bytes = base64ToUint8Array(data);
-      term?.write(bytes);
+      term?.write(bytes, scheduleRead);
     });
 
     subscribeAgent(props.agentId);
@@ -440,16 +524,20 @@ export function AgentDetail(props: AgentDetailProps) {
       };
       if (Math.abs(v) > 0.1) momentumRaf = requestAnimationFrame(step);
     };
-    termContainer.addEventListener('touchstart', onTouchStart, { passive: true });
-    termContainer.addEventListener('touchmove', onTouchMove, { passive: false });
-    termContainer.addEventListener('touchend', onTouchEnd, { passive: true });
-    termContainer.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    // Capture phase, so xterm's own gesture handling can't swallow the events.
+    const passive = { passive: true, capture: true };
+    termContainer.addEventListener('touchstart', onTouchStart, passive);
+    termContainer.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+    termContainer.addEventListener('touchend', onTouchEnd, passive);
+    termContainer.addEventListener('touchcancel', onTouchEnd, passive);
 
     onCleanup(() => {
-      termContainer.removeEventListener('touchstart', onTouchStart);
-      termContainer.removeEventListener('touchmove', onTouchMove);
-      termContainer.removeEventListener('touchend', onTouchEnd);
-      termContainer.removeEventListener('touchcancel', onTouchEnd);
+      termContainer.removeEventListener('touchstart', onTouchStart, true);
+      termContainer.removeEventListener('touchmove', onTouchMove, true);
+      termContainer.removeEventListener('touchend', onTouchEnd, true);
+      termContainer.removeEventListener('touchcancel', onTouchEnd, true);
+      clearTimeout(readTimer);
+      reader.dispose();
       observer.disconnect();
       // Cancel any queued refit/fling so it can't run against the disposed terminal.
       cancelAnimationFrame(resizeRaf);
@@ -527,7 +615,7 @@ export function AgentDetail(props: AgentDetailProps) {
           display: 'flex',
           'align-items': 'center',
           gap: '6px',
-          padding: '8px 14px',
+          padding: compact() ? '2px 14px' : '8px 14px',
           'border-bottom': '1px solid #223040',
           'flex-shrink': '0',
           position: 'relative',
@@ -600,7 +688,7 @@ export function AgentDetail(props: AgentDetailProps) {
         </Show>
       </div>
 
-      {/* Terminal / Notes tabs */}
+      {/* Output / Terminal / Notes tabs — standalone terminals have no notes. */}
       <div
         style={{
           display: 'flex',
@@ -613,8 +701,9 @@ export function AgentDetail(props: AgentDetailProps) {
       >
         <For
           each={[
+            { id: 'output' as const, label: 'Output' },
             { id: 'terminal' as const, label: 'Terminal' },
-            { id: 'notes' as const, label: 'Notes' },
+            ...(isTerminal() ? [] : [{ id: 'notes' as const, label: 'Notes' }]),
           ]}
         >
           {(tab) => (
@@ -623,15 +712,15 @@ export function AgentDetail(props: AgentDetailProps) {
                 if (tab.id === 'notes') {
                   void openNotes();
                 } else {
-                  setView('terminal');
-                  // The terminal was display:none while Notes was open; re-fit
-                  // once it's laid out again so it fills the width.
+                  setView(tab.id);
+                  // Re-fit once the new view is laid out: the Terminal view
+                  // fits the phone, the Output view mirrors the desktop grid.
                   requestAnimationFrame(() => refit());
                 }
               }}
               style={{
                 flex: '1',
-                padding: '10px 0',
+                padding: compact() ? '6px 0' : '10px 0',
                 background: 'none',
                 border: 'none',
                 'border-bottom': view() === tab.id ? '2px solid #2ec8ff' : '2px solid transparent',
@@ -663,6 +752,51 @@ export function AgentDetail(props: AgentDetailProps) {
           {status() === 'connecting' ? 'Reconnecting...' : 'Disconnected — check your network'}
         </div>
       </Show>
+
+      {/* Output — kept mounted so its scroll position survives tab switches. */}
+      <div
+        style={{
+          flex: '1',
+          'min-height': '0',
+          position: 'relative',
+          display: view() === 'output' ? 'flex' : 'none',
+          'flex-direction': 'column',
+        }}
+      >
+        <OutputView
+          lines={outputLines()}
+          fontSize={outputFont()}
+          scrollToEndSignal={outputJump()}
+          onAtBottomChange={setOutputAtBottom}
+        />
+        <Show when={!outputAtBottom()}>
+          <button
+            onClick={() => setOutputJump((n) => n + 1)}
+            aria-label="Scroll to latest output"
+            class="pc-tap"
+            style={{
+              position: 'absolute',
+              bottom: '12px',
+              right: '12px',
+              width: '44px',
+              height: '44px',
+              'border-radius': '50%',
+              background: '#12181f',
+              border: '1px solid #2ec8ff55',
+              color: '#d7e4f0',
+              'font-size': '18px',
+              cursor: 'pointer',
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'center',
+              'z-index': '10',
+              'touch-action': 'manipulation',
+            }}
+          >
+            &#8595;
+          </button>
+        </Show>
+      </div>
 
       {/* Terminal — overflow:hidden clips xterm.js overlays so they don't
            capture touch events over the header/input areas. Kept mounted (hidden,
@@ -836,8 +970,10 @@ export function AgentDetail(props: AgentDetailProps) {
       <div
         style={{
           'border-top': '1px solid #223040',
-          padding: '8px 10px max(8px, env(safe-area-inset-bottom)) 10px',
-          display: view() === 'terminal' ? 'flex' : 'none',
+          padding: compact()
+            ? '6px 10px max(6px, env(safe-area-inset-bottom)) 10px'
+            : '8px 10px max(8px, env(safe-area-inset-bottom)) 10px',
+          display: view() === 'notes' ? 'none' : 'flex',
           'flex-direction': 'column',
           gap: '6px',
           'flex-shrink': '0',
@@ -874,7 +1010,7 @@ export function AgentDetail(props: AgentDetailProps) {
               }
               setInputText(val);
             }}
-            placeholder="Type command..."
+            placeholder={isTerminal() ? 'Type a command…' : 'Message the agent…'}
             style={{
               flex: '1',
               background: '#10161d',
@@ -926,7 +1062,7 @@ export function AgentDetail(props: AgentDetailProps) {
         <div
           class="pc-no-scrollbar"
           style={{
-            display: 'flex',
+            display: compact() ? 'none' : 'flex',
             gap: '6px',
             'overflow-x': 'auto',
             'touch-action': 'pan-x',
@@ -963,7 +1099,7 @@ export function AgentDetail(props: AgentDetailProps) {
             )}
           </For>
           <div style={{ 'margin-left': 'auto', display: 'flex', gap: '6px', 'flex-shrink': '0' }}>
-            <Show when={manualFont()}>
+            <Show when={view() === 'terminal' && manualFont()}>
               <button
                 onClick={resetFit}
                 class="pc-tap"
@@ -986,17 +1122,17 @@ export function AgentDetail(props: AgentDetailProps) {
             <button
               onClick={() => changeFont(-1)}
               class="pc-tap"
-              disabled={termFontSize() <= MIN_FONT}
+              disabled={atMinFont()}
               style={{
                 background: '#1a2430',
                 border: '1px solid #223040',
                 'border-radius': '8px',
                 padding: '10px 14px',
-                color: termFontSize() <= MIN_FONT ? '#344050' : '#9bb0c3',
+                color: atMinFont() ? '#344050' : '#9bb0c3',
                 'font-size': '14px',
                 'font-weight': '700',
                 'font-family': "'JetBrains Mono', 'Courier New', monospace",
-                cursor: termFontSize() <= MIN_FONT ? 'default' : 'pointer',
+                cursor: atMinFont() ? 'default' : 'pointer',
                 'touch-action': 'manipulation',
                 transition: 'background 0.16s ease',
               }}
@@ -1007,17 +1143,17 @@ export function AgentDetail(props: AgentDetailProps) {
             <button
               onClick={() => changeFont(1)}
               class="pc-tap"
-              disabled={termFontSize() >= MAX_FONT}
+              disabled={atMaxFont()}
               style={{
                 background: '#1a2430',
                 border: '1px solid #223040',
                 'border-radius': '8px',
                 padding: '10px 14px',
-                color: termFontSize() >= MAX_FONT ? '#344050' : '#9bb0c3',
+                color: atMaxFont() ? '#344050' : '#9bb0c3',
                 'font-size': '14px',
                 'font-weight': '700',
                 'font-family': "'JetBrains Mono', 'Courier New', monospace",
-                cursor: termFontSize() >= MAX_FONT ? 'default' : 'pointer',
+                cursor: atMaxFont() ? 'default' : 'pointer',
                 'touch-action': 'manipulation',
                 transition: 'background 0.16s ease',
               }}

@@ -6,7 +6,29 @@ import type { RemoteAgent } from '../../electron/remote/protocol';
 interface AgentListProps {
   onSelect: (agentId: string, taskName: string) => void;
   onNewTask: () => void;
+  onNewTerminal: () => void;
+  openingTerminal: boolean;
+  terminalError: string | null;
 }
+
+const actionButtonStyle = {
+  flex: '1',
+  display: 'flex',
+  'align-items': 'center',
+  'justify-content': 'center',
+  gap: '4px',
+  padding: '8px 10px',
+  'min-height': '40px',
+  background: '#173042',
+  border: '1px solid #2ec8ff55',
+  'border-radius': '8px',
+  color: '#2ec8ff',
+  'font-size': '14px',
+  'font-weight': '600',
+  'white-space': 'nowrap',
+  cursor: 'pointer',
+  'touch-action': 'manipulation',
+} as const;
 
 export function AgentList(props: AgentListProps) {
   const running = createMemo(() => agents().filter((a) => a.status === 'running').length);
@@ -49,15 +71,26 @@ export function AgentList(props: AgentListProps) {
           display: 'flex',
           'align-items': 'center',
           'justify-content': 'space-between',
+          gap: '8px',
           padding: '14px 16px 12px',
           'border-bottom': '1px solid #223040',
           background: '#12181f',
         }}
       >
-        <span style={{ 'font-size': '18px', 'font-weight': '600', color: '#d7e4f0' }}>
+        <span
+          style={{
+            'font-size': '18px',
+            'font-weight': '600',
+            color: '#d7e4f0',
+            'min-width': '0',
+            overflow: 'hidden',
+            'text-overflow': 'ellipsis',
+            'white-space': 'nowrap',
+          }}
+        >
           Parallel Code
         </span>
-        <div style={{ display: 'flex', 'align-items': 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', 'align-items': 'center', gap: '8px', 'flex-shrink': '0' }}>
           <Show when={needsInput() > 0}>
             <span
               style={{
@@ -101,28 +134,51 @@ export function AgentList(props: AgentListProps) {
               {running()}/{total()}
             </span>
           </div>
-          <button
-            onClick={() => props.onNewTask()}
-            aria-label="New task"
-            style={{
-              display: 'flex',
-              'align-items': 'center',
-              gap: '4px',
-              padding: '6px 12px',
-              background: '#173042',
-              border: '1px solid #2ec8ff55',
-              'border-radius': '8px',
-              color: '#2ec8ff',
-              'font-size': '14px',
-              'font-weight': '600',
-              cursor: 'pointer',
-              'touch-action': 'manipulation',
-            }}
-          >
-            + New
-          </button>
         </div>
       </div>
+
+      {/* New task / new terminal, side by side */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '8px',
+          padding: '10px 12px',
+          'border-bottom': '1px solid #223040',
+          background: '#12181f',
+          'flex-shrink': '0',
+        }}
+      >
+        <button onClick={() => props.onNewTask()} class="pc-tap" style={actionButtonStyle}>
+          + New task
+        </button>
+        <button
+          onClick={() => props.onNewTerminal()}
+          disabled={props.openingTerminal}
+          class="pc-tap"
+          style={{
+            ...actionButtonStyle,
+            opacity: props.openingTerminal ? '0.6' : '1',
+            cursor: props.openingTerminal ? 'default' : 'pointer',
+          }}
+        >
+          {props.openingTerminal ? 'Opening…' : '>_ New terminal'}
+        </button>
+      </div>
+
+      <Show when={props.terminalError}>
+        <div
+          style={{
+            padding: '8px 16px',
+            background: '#7f1d1d',
+            color: '#fca5a5',
+            'font-size': '14px',
+            'text-align': 'center',
+            'flex-shrink': '0',
+          }}
+        >
+          {props.terminalError}
+        </div>
+      </Show>
 
       {/* Connection status banner */}
       <Show when={status() !== 'connected'}>

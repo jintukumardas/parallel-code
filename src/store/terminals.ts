@@ -13,9 +13,11 @@ let lastCreateTime = 0;
 
 const REMOVE_ANIMATION_MS = 300;
 
-export function createTerminal(): void {
+/** Open a standalone terminal. Returns it, or null when debounced (a repeat
+ *  within 300ms of the previous one). */
+export function createTerminal(): Terminal | null {
   const now = Date.now();
-  if (now - lastCreateTime < 300) return;
+  if (now - lastCreateTime < 300) return null;
   lastCreateTime = now;
 
   terminalCounter++;
@@ -37,6 +39,7 @@ export function createTerminal(): void {
       .querySelector<HTMLElement>(`[data-task-id="${CSS.escape(id)}"]`)
       ?.scrollIntoView({ block: 'nearest', inline: 'end', behavior: 'instant' });
   });
+  return terminal;
 }
 
 export async function closeTerminal(terminalId: string): Promise<void> {

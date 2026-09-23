@@ -16,6 +16,9 @@ export interface RemoteAgent {
   lastLine: string;
   /** Richer, renderer-derived task status. Defaults to 'idle' when unknown. */
   attention: RemoteAttentionState;
+  /** 'terminal' for a standalone desktop terminal (a plain shell, no task
+   *  notes); absent for a task's agent. */
+  kind?: 'terminal';
 }
 
 // --- Server -> Client messages ---
@@ -43,6 +46,9 @@ export interface ScrollbackMessage {
   agentId: string;
   data: string; // base64
   cols: number;
+  /** Desktop PTY rows. The phone's emulator must match both dimensions to
+   *  replay cursor-positioned TUI redraws faithfully. */
+  rows?: number;
 }
 
 export type ServerMessage = OutputMessage | StatusMessage | AgentsMessage | ScrollbackMessage;

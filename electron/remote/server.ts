@@ -16,6 +16,7 @@ import {
   getActiveAgentIds,
   getAgentMeta,
   getAgentCols,
+  getAgentRows,
   onPtyEvent,
 } from '../ipc/pty.js';
 import {
@@ -279,22 +280,26 @@ function buildAgentList(
     lastLine: string;
   },
   getTaskAttention: (taskId: string) => RemoteAttentionState,
+  getTerminalName: (terminalId: string) => string | undefined,
 ): RemoteAgent[] {
   const byTask = new Map<string, RemoteAgent>();
   for (const agentId of getActiveAgentIds()) {
     const meta = getAgentMeta(agentId);
     if (!meta) continue;
-    // Skip shell/sub-terminals — mobile should only show the main agent
-    if (meta.isShell) continue;
+    // Shells are skipped — mobile shows each task's main agent — except
+    // standalone desktop terminals, which are shells with no task around them.
+    const terminalName = meta.isShell ? getTerminalName(meta.taskId) : undefined;
+    if (meta.isShell && terminalName === undefined) continue;
     const info = getAgentStatus(agentId);
     const agent: RemoteAgent = {
       agentId,
       taskId: meta.taskId,
-      taskName: getTaskName(meta.taskId),
+      taskName: terminalName ?? getTaskName(meta.taskId),
       status: info.status,
       exitCode: info.exitCode,
       lastLine: info.lastLine,
-      attention: getTaskAttention(meta.taskId),
+      attention: terminalName !== undefined ? 'idle' : getTaskAttention(meta.taskId),
+      ...(terminalName !== undefined ? { kind: 'terminal' as const } : {}),
     };
     // Prefer running agents over exited ones for the same task
     const existing = byTask.get(meta.taskId);
@@ -740,12 +745,17 @@ export function startRemoteServer(opts: {
   setTaskNotes?: (taskId: string, notes: string) => Promise<void>;
   /** Renderer-derived task attention state (needs input, working, ready, …). */
   getTaskAttention?: (taskId: string) => RemoteAttentionState;
+  /** Name of an open standalone terminal, or undefined if `terminalId` isn't one. */
+  getTerminalName?: (terminalId: string) => string | undefined;
+  /** Open a standalone terminal on behalf of a paired phone (renderer-backed). */
+  createTerminalFromMobile?: () => Promise<{ terminalId: string; agentId: string }>;
 }): Promise<RemoteServer> {
   // Defensive default for the optional signature: every real caller wires
   // attention via mobileTaskBridge, so 'idle' is only used if a future caller
   // omits it.
   const getTaskAttention: (taskId: string) => RemoteAttentionState =
     opts.getTaskAttention ?? (() => 'idle');
+  const getTerminalName = opts.getTerminalName ?? (() => undefined);
   const token = randomBytes(24).toString('base64url');
   const subtaskToken = randomBytes(24).toString('base64url');
   const mobileToken = randomBytes(24).toString('base64url');
@@ -876,10 +886,15 @@ export function startRemoteServer(opts: {
         return;
       }
 
-      // --- Paired-mobile task creation ---
-      // GET projects for the picker + POST a new top-level task. Both require the
-      // elevated "paired" token; the read-only mobile token is rejected here.
-      if (url.pathname === '/api/mobile/projects' || url.pathname === '/api/mobile/tasks') {
+      // --- Paired-mobile task/terminal creation ---
+      // GET projects for the picker, POST a new top-level task, or POST a
+      // standalone terminal. All require the elevated "paired" token; the
+      // read-only mobile token is rejected here.
+      if (
+        url.pathname === '/api/mobile/projects' ||
+        url.pathname === '/api/mobile/tasks' ||
+        url.pathname === '/api/mobile/terminals'
+      ) {
         if (tokenClass !== 'paired') return jsonEnd(403, { error: 'forbidden' });
 
         if (url.pathname === '/api/mobile/projects' && req.method === 'GET') {
@@ -913,6 +928,15 @@ export function startRemoteServer(opts: {
                 .catch((err) => jsonEnd(500, { error: String(err) }));
             })
             .catch(() => jsonEnd(400, { error: 'bad request' }));
+          return;
+        }
+
+        if (url.pathname === '/api/mobile/terminals' && req.method === 'POST') {
+          const createTerminal = opts.createTerminalFromMobile;
+          if (!createTerminal) return jsonEnd(503, { error: 'terminal creation unavailable' });
+          createTerminal()
+            .then((r) => jsonEnd(201, r))
+            .catch((err) => jsonEnd(500, { error: String(err) }));
           return;
         }
 
@@ -1007,7 +1031,12 @@ export function startRemoteServer(opts: {
       }
 
       if (url.pathname === '/api/agents' && req.method === 'GET') {
-        const list = buildAgentList(opts.getTaskName, opts.getAgentStatus, getTaskAttention);
+        const list = buildAgentList(
+          opts.getTaskName,
+          opts.getAgentStatus,
+          getTaskAttention,
+          getTerminalName,
+        );
         res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
         res.end(JSON.stringify(list));
         return;
@@ -1213,12 +1242,22 @@ export function startRemoteServer(opts: {
   }
 
   const unsubSpawn = onPtyEvent('spawn', () => {
-    const list = buildAgentList(opts.getTaskName, opts.getAgentStatus, getTaskAttention);
+    const list = buildAgentList(
+      opts.getTaskName,
+      opts.getAgentStatus,
+      getTaskAttention,
+      getTerminalName,
+    );
     broadcast({ type: 'agents', list });
   });
 
   const unsubListChanged = onPtyEvent('list-changed', () => {
-    const list = buildAgentList(opts.getTaskName, opts.getAgentStatus, getTaskAttention);
+    const list = buildAgentList(
+      opts.getTaskName,
+      opts.getAgentStatus,
+      getTaskAttention,
+      getTerminalName,
+    );
     broadcast({ type: 'agents', list });
   });
 
@@ -1230,7 +1269,12 @@ export function startRemoteServer(opts: {
       clientSubs.get(client)?.delete(agentId);
     }
     setTimeout(() => {
-      const list = buildAgentList(opts.getTaskName, opts.getAgentStatus, getTaskAttention);
+      const list = buildAgentList(
+        opts.getTaskName,
+        opts.getAgentStatus,
+        getTaskAttention,
+        getTerminalName,
+      );
       broadcast({ type: 'agents', list });
     }, 100);
   });
@@ -1243,7 +1287,12 @@ export function startRemoteServer(opts: {
     if (classifyToken(req) === 'coordinator') {
       authenticatedClients.add(ws);
       clientTokenTypes.set(ws, 'coordinator');
-      const list = buildAgentList(opts.getTaskName, opts.getAgentStatus, getTaskAttention);
+      const list = buildAgentList(
+        opts.getTaskName,
+        opts.getAgentStatus,
+        getTaskAttention,
+        getTerminalName,
+      );
       ws.send(JSON.stringify({ type: 'agents', list } satisfies ServerMessage));
     } else {
       // Close unauthenticated connections after 5 seconds. Distinct code from
@@ -1271,7 +1320,12 @@ export function startRemoteServer(opts: {
           clientTokenTypes.set(ws, tokenType);
           const timer = authTimers.get(ws);
           if (timer) clearTimeout(timer);
-          const list = buildAgentList(opts.getTaskName, opts.getAgentStatus, getTaskAttention);
+          const list = buildAgentList(
+            opts.getTaskName,
+            opts.getAgentStatus,
+            getTaskAttention,
+            getTerminalName,
+          );
           ws.send(JSON.stringify({ type: 'agents', list } satisfies ServerMessage));
         } else {
           ws.close(4001, 'Unauthorized');
@@ -1338,6 +1392,7 @@ export function startRemoteServer(opts: {
                 agentId: msg.agentId,
                 data: scrollback,
                 cols: getAgentCols(msg.agentId),
+                rows: getAgentRows(msg.agentId),
               } satisfies ServerMessage),
             );
           }

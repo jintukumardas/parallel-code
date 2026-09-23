@@ -34,8 +34,15 @@ const BY_ATTENTION: Partial<Record<RemoteAttentionState, StatusDisplay>> = {
 };
 
 export function agentStatusDisplay(
-  agent: Pick<RemoteAgent, 'status' | 'attention'>,
+  agent: Pick<RemoteAgent, 'status' | 'attention' | 'kind'>,
 ): StatusDisplay {
+  // A standalone terminal is a plain shell: the desktop tracks no attention
+  // state for it, so "Idle" would be misleading.
+  if (agent.kind === 'terminal') {
+    return agent.status === 'exited'
+      ? { label: 'Exited', color: GREY, glow: false }
+      : { label: 'Terminal', color: GREY, glow: false };
+  }
   const known = BY_ATTENTION[agent.attention];
   if (known) return known;
   // attention is 'idle' (or unknown): distinguish a live idle agent from an

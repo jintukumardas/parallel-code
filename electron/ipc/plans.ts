@@ -219,11 +219,54 @@ function isPlanInDirs(
   return dirs.some((dir) => path.resolve(dir) === planDir);
 }
 
+/** Change time of each plan file on disk, keyed by absolute path. */
+type PlanFileTimes = ReadonlyMap<string, number>;
+
+function planFileTimes(worktreePath: string, plansDirs: string[]): PlanFileTimes {
+  const times = new Map<string, number>();
+  for (const dir of plansDirs) {
+    for (const name of planFileNames(worktreePath, dir)) {
+      const filePath = path.join(dir, name);
+      try {
+        times.set(filePath, fs.statSync(filePath).ctimeMs);
+      } catch {
+        // Deleted between readdir and stat
+      }
+    }
+  }
+  return times;
+}
+
+/**
+ * macOS FSEvents can report writes made shortly before a watcher started, so a
+ * leftover plan would arrive as a live write and skip the `recovered` path.
+ * An event for a file unchanged since the watcher started is one of those; a
+ * new, changed, or missing (deleted) file is real.
+ */
+function changedSinceStart(filePath: string, atStart: PlanFileTimes): boolean {
+  const before = atStart.get(filePath);
+  if (before === undefined) return true;
+  try {
+    return fs.statSync(filePath).ctimeMs !== before;
+  } catch {
+    return true;
+  }
+}
+
 /** Start watching a single directory. Returns the watcher or null on failure. */
-function watchDir(worktreePath: string, dir: string, onChange: () => void): fs.FSWatcher | null {
+function watchDir(
+  worktreePath: string,
+  dir: string,
+  onChange: () => void,
+  atStart: PlanFileTimes,
+): fs.FSWatcher | null {
   try {
     const watcher = fs.watch(dir, (_event, fileName) => {
-      if (fileName === null || isPlanFile(worktreePath, dir, fileName.toString())) onChange();
+      if (fileName === null) return onChange();
+      const name = fileName.toString();
+      if (isPlanFile(worktreePath, dir, name) && changedSinceStart(path.join(dir, name), atStart)) {
+        onChange();
+      }
     });
     watcher.on('error', (err) => {
       console.warn(`Plan watcher error for ${dir}:`, err);
@@ -240,6 +283,7 @@ function startDirPolling(
   taskId: string,
   entry: PlanWatcher,
   onChange: (attached?: readonly string[]) => void,
+  atStart: PlanFileTimes,
 ): void {
   if (entry.watchedDirs.size === entry.plansDirs.length) return;
 
@@ -251,7 +295,7 @@ function startDirPolling(
     for (const dir of current.plansDirs) {
       if (current.watchedDirs.has(dir)) continue;
       if (!fs.existsSync(dir)) continue;
-      const watcher = watchDir(current.worktreePath, dir, onChange);
+      const watcher = watchDir(current.worktreePath, dir, onChange, atStart);
       if (watcher) {
         current.fsWatchers.push(watcher);
         current.watchedDirs.add(dir);
@@ -284,6 +328,9 @@ export function startPlanWatcher(win: BrowserWindow, taskId: string, worktreePat
   const plansDirs = PLAN_DIRS.map((rel) => path.join(worktreePath, rel));
   const claudePlansDir = path.join(worktreePath, '.claude', 'plans');
   fs.mkdirSync(claudePlansDir, { recursive: true });
+  // Taken before the watchers start; a write that slips in between is picked
+  // up by the startup read below instead.
+  const atStart = planFileTimes(worktreePath, plansDirs);
 
   const entry: PlanWatcher = {
     fsWatchers: [],
@@ -321,7 +368,7 @@ export function startPlanWatcher(win: BrowserWindow, taskId: string, worktreePat
 
   for (const dir of plansDirs) {
     if (!fs.existsSync(dir)) continue;
-    const watcher = watchDir(worktreePath, dir, onChange);
+    const watcher = watchDir(worktreePath, dir, onChange, atStart);
     if (watcher) {
       entry.fsWatchers.push(watcher);
       entry.watchedDirs.add(dir);
@@ -329,7 +376,7 @@ export function startPlanWatcher(win: BrowserWindow, taskId: string, worktreePat
   }
 
   watchers.set(taskId, entry);
-  startDirPolling(taskId, entry, onChange);
+  startDirPolling(taskId, entry, onChange, atStart);
   void readUncommittedPlan(worktreePath, plansDirs)
     .then((plan) => {
       // A live event or a replacement watcher takes precedence over this startup read.

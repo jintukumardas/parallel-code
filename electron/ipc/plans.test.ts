@@ -50,6 +50,16 @@ function watchPlans() {
   return send;
 }
 
+/**
+ * On macOS, libuv serves every fs.watch in the process from one FSEvents
+ * stream and restarts it whenever a watcher is added or removed; a write that
+ * lands during the restart is never reported. Give the watchers a moment
+ * before writing in tests that assert on the very first event.
+ */
+function settleWatchers(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 300));
+}
+
 describe('root-level plan files', () => {
   it.each(['example-plan.md', 'PLAN.md', 'implementation_plan.md', 'plan.v2.md'])(
     'reads %s for plan review and restores it by filename',
@@ -77,6 +87,7 @@ describe('root-level plan files', () => {
 
   it('publishes a root plan when it is created, edited, and removed', async () => {
     const send = watchPlans();
+    await settleWatchers();
     writeFile('example-plan.md');
     await vi.waitFor(() =>
       expect(send).toHaveBeenLastCalledWith(IPC.PlanContent, {
@@ -209,6 +220,7 @@ describe('root-level plan files', () => {
     async (relativePath) => {
       fs.mkdirSync(path.dirname(path.join(worktreePath, relativePath)), { recursive: true });
       const send = watchPlans();
+      await settleWatchers();
       writeFile(relativePath);
       await vi.waitFor(() =>
         expect(send).toHaveBeenLastCalledWith(

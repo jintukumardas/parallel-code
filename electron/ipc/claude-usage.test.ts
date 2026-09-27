@@ -3,6 +3,17 @@ import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import crypto from 'crypto';
+
+// On macOS fetchClaudeUsage checks the keychain before the credentials file,
+// and would pick up the developer's real Claude login over the test fixture.
+// Report every keychain item as absent; readKeychainCredentials takes an
+// injected exec for the tests that cover the keychain itself.
+vi.mock('child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('child_process')>()),
+  execFile: (_file: string, _args: string[], _opts: unknown, cb: (err: Error) => void) =>
+    cb(new Error('The specified item could not be found in the keychain.')),
+}));
+
 import {
   fetchClaudeUsage,
   parseAccessToken,

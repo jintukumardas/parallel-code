@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PromptInput } from './PromptInput';
 
 const { storeMock, setTaskPromptDraft } = vi.hoisted(() => ({
-  storeMock: { tasks: {} as Record<string, unknown> },
+  storeMock: { tasks: {} as Record<string, unknown>, agents: {} as Record<string, unknown> },
   setTaskPromptDraft: vi.fn(),
 }));
 
@@ -50,6 +50,7 @@ afterEach(() => {
   while (disposers.length > 0) disposers.pop()?.();
   document.body.replaceChildren();
   storeMock.tasks = {};
+  storeMock.agents = {};
   setTaskPromptDraft.mockClear();
 });
 
@@ -61,15 +62,30 @@ async function waitFor(probe: () => boolean): Promise<void> {
   throw new Error('Condition never became true');
 }
 
-function mount(taskId: string): HTMLTextAreaElement {
+function mount(taskId: string, initialPrompt?: string): HTMLTextAreaElement {
   const container = document.createElement('div');
   document.body.append(container);
   disposers.push(
-    render(() => <PromptInput taskId={taskId} taskName="Task" agentId="agent-1" />, container),
+    render(
+      () => (
+        <PromptInput
+          taskId={taskId}
+          taskName="Task"
+          agentId="agent-1"
+          initialPrompt={initialPrompt}
+        />
+      ),
+      container,
+    ),
   );
   const el = container.querySelector<HTMLTextAreaElement>('textarea.prompt-textarea');
   if (!el) throw new Error('textarea not rendered');
   return el;
+}
+
+function type(el: HTMLTextAreaElement, value: string): void {
+  el.value = value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 describe('PromptInput draft persistence', () => {
@@ -101,5 +117,46 @@ describe('PromptInput draft persistence', () => {
     await waitFor(() => setTaskPromptDraft.mock.calls.some(([, text]) => text === ''));
 
     expect(textarea.value).toBe('');
+  });
+});
+
+describe('PromptInput queued initial prompt', () => {
+  it('fills the box with the queued prompt', () => {
+    storeMock.tasks = { 'task-1': { id: 'task-1' } };
+    expect(mount('task-1', 'ship the release notes').value).toBe('ship the release notes');
+  });
+
+  it('stays empty after the user deletes a queued prompt that is still on the task', () => {
+    storeMock.tasks = { 'task-1': { id: 'task-1' } };
+    const textarea = mount('task-1', 'ship the release notes');
+
+    type(textarea, '');
+
+    expect(textarea.value).toBe('');
+    expect(setTaskPromptDraft).toHaveBeenLastCalledWith('task-1', '');
+  });
+
+  it("keeps the user's own text when they edit over a queued prompt", () => {
+    storeMock.tasks = { 'task-1': { id: 'task-1' } };
+    const textarea = mount('task-1', 'ship the release notes');
+
+    type(textarea, 'ship the changelog instead');
+
+    expect(textarea.value).toBe('ship the changelog instead');
+  });
+
+  it('does not restore the queued prompt after the field is cleared by a send', async () => {
+    storeMock.tasks = { 'task-1': { id: 'task-1' } };
+    const textarea = mount('task-1', 'ship the release notes');
+
+    textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await waitFor(() => setTaskPromptDraft.mock.calls.some(([, text]) => text === ''));
+
+    expect(textarea.value).toBe('');
+  });
+
+  it('leaves an existing draft alone rather than overwriting it with the queued prompt', () => {
+    storeMock.tasks = { 'task-1': { id: 'task-1', promptDraft: 'half-written thought' } };
+    expect(mount('task-1', 'ship the release notes').value).toBe('half-written thought');
   });
 });

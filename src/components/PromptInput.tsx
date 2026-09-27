@@ -182,11 +182,19 @@ export function PromptInput(props: PromptInputProps) {
       return;
     }
 
-    const currentText = text().trim();
+    // Already sent this prompt — check before filling, so a queued prompt that
+    // outlived its delivery can't put itself back into an emptied box.
+    if (autoSentInitialPrompt() === ip) return;
+
+    // untrack: this effect fills the box, it must not re-run because of what is
+    // in it.  Tracking `text()` here resurrects the prompt — clearing the box
+    // re-satisfies the "don't clobber the user's typing" guard below, so the
+    // message the user just deleted is written straight back.  User edits are
+    // handled by the cancel effect below instead.
+    const currentText = untrack(() => text().trim());
     if (currentText && currentText !== ip) return;
     setText(ip);
     setTaskPromptDraftActive(props.taskId, false);
-    if (autoSentInitialPrompt() === ip) return;
 
     const agentId = props.agentId;
     const coordinatedBy = props.coordinatedBy;
@@ -418,6 +426,19 @@ export function PromptInput(props: PromptInputProps) {
 
       trySend();
     }, QUIESCENCE_POLL_MS);
+  });
+
+  // Editing the box while a queued prompt waits hands the field to the user:
+  // cancel the pending auto-send so it can't fire their half-typed text.  This
+  // is one-way — emptying the box afterwards must not re-arm it, which is why
+  // the effect above no longer watches the text.
+  createEffect(() => {
+    const current = text().trim();
+    const ip = untrack(() => props.initialPrompt?.trim() ?? '');
+    if (!ip || current === ip) return;
+    if (!cleanupAutoSend) return;
+    cleanupAutoSend();
+    cleanupAutoSend = undefined;
   });
 
   createEffect(() => {

@@ -151,6 +151,25 @@ describe('AgentTerminal', () => {
     expect(store.tasks[id]?.initialPrompt).toBe('Queued instruction');
   });
 
+  it('leaves the box empty when the user deletes the queued instruction', () => {
+    mount([agent('codex', 'Codex')]);
+    const id = documentAgentTaskId('docs');
+    setInitialPrompt(id, 'Keep this instruction');
+    disposers.pop()?.();
+    const host = mount([agent('codex', 'Codex')]);
+    const textarea = host.querySelector<HTMLTextAreaElement>('.prompt-textarea');
+    if (!textarea) throw new Error('prompt box not rendered');
+
+    textarea.value = '';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+
+    // The instruction stays queued for a manual send; it just must not write
+    // itself back into the box the user emptied.
+    expect(textarea.value).toBe('');
+    expect(store.tasks[id]?.promptDraft).toBeFalsy();
+    expect(store.tasks[id]?.initialPrompt).toBe('Keep this instruction');
+  });
+
   it('opens a Markdown path inside the project in the viewer, others elsewhere', () => {
     const host = mount([agent('codex', 'Codex')]);
 

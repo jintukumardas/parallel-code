@@ -1,4 +1,4 @@
-import { Show, createEffect, onCleanup } from 'solid-js';
+import { Show, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
 import { TaskAITerminal } from '../components/TaskAITerminal';
 import { PromptInput } from '../components/PromptInput';
 import { setStore, store } from '../store/core';
@@ -72,6 +72,16 @@ function openInWorkspace(projectPath: string, filePath: string): boolean {
 
 function AgentTask(props: { task: Task; visible: boolean }) {
   const resumed = () => store.agents[props.task.agentIds[0]]?.resumed === true;
+  // An instruction a resume left queued fills the box once, when the session is
+  // reopened, so it can be reviewed before it is sent.  It is captured here at
+  // mount rather than derived from the live draft: a derivation puts the
+  // instruction straight back every time the user empties the field, so a
+  // message they deleted — or already sent — keeps reappearing.
+  const [resumedPrompt, setResumedPrompt] = createSignal(
+    untrack(() =>
+      resumed() && !props.task.promptDraft?.trim() ? props.task.initialPrompt : undefined,
+    ),
+  );
   return (
     <>
       <div class="docws-agent-term">
@@ -96,17 +106,17 @@ function AgentTask(props: { task: Task; visible: boolean }) {
           taskName={props.task.name}
           agentId={props.task.agentIds[0] ?? ''}
           initialPrompt={resumed() ? undefined : props.task.initialPrompt}
-          prefillPrompt={
-            props.task.prefillPrompt ??
-            (resumed() && !props.task.promptDraft?.trim() ? props.task.initialPrompt : undefined)
-          }
+          prefillPrompt={props.task.prefillPrompt ?? resumedPrompt()}
           onSend={(text) => {
             // A prompt typed while an instruction waits leaves the wait in place.
             if (props.task.initialPrompt?.trim() === text.trim()) {
               clearInitialPrompt(props.task.id);
             }
           }}
-          onPrefillConsumed={() => clearPrefillPrompt(props.task.id)}
+          onPrefillConsumed={() => {
+            setResumedPrompt(undefined);
+            clearPrefillPrompt(props.task.id);
+          }}
         />
       </div>
     </>

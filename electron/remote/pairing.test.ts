@@ -12,6 +12,7 @@ vi.mock('../ipc/pty.js', () => ({
   subscribeToAgent: vi.fn(),
   unsubscribeFromAgent: vi.fn(),
   getAgentScrollback: vi.fn(() => null),
+  snapshotAgentScreen: vi.fn(),
   getActiveAgentIds: vi.fn(() => []),
   getAgentMeta: vi.fn(() => null),
   getAgentCols: vi.fn(() => 80),

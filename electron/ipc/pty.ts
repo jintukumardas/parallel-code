@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type { BrowserWindow } from 'electron';
 import { RingBuffer } from '../remote/ring-buffer.js';
+import { ScreenMirror } from '../remote/screen-mirror.js';
 import { resolveUserShell } from '../user-shell.js';
 import {
   detectRepoRoot,
@@ -31,6 +32,8 @@ interface PtySession {
   flushTimer: ReturnType<typeof setTimeout> | null;
   subscribers: Set<(encoded: string) => void>;
   scrollback: RingBuffer;
+  /** Rendered screen and history, served to phones when they open the task. */
+  mirror: ScreenMirror;
   /** Assigned container name when running in Docker mode, null otherwise. */
   containerName: string | null;
 }
@@ -393,6 +396,7 @@ function cleanupExistingSession(agentId: string, existing: PtySession | undefine
   if (existing.flushTimer) clearTimeout(existing.flushTimer);
   existing.subscribers.clear();
   existing.proc.kill();
+  existing.mirror.dispose();
   sessions.delete(agentId);
 }
 
@@ -430,6 +434,7 @@ function attachPtyOutputHandlers(
     const encoded = batch.toString('base64');
     send({ type: 'Data', data: encoded });
     session.scrollback.write(batch);
+    session.mirror.write(batch);
     for (const sub of session.subscribers) {
       sub(encoded);
     }
@@ -495,6 +500,7 @@ function attachPtyOutputHandlers(
     });
 
     emitPtyEvent('exit', args.agentId, { exitCode, signal });
+    session.mirror.dispose();
     sessions.delete(args.agentId);
   });
 }
@@ -545,6 +551,7 @@ export function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): void {
     existing.proc.resume();
     if (args.cols > 0 && args.rows > 0) {
       existing.proc.resize(args.cols, args.rows);
+      existing.mirror.resize(args.cols, args.rows);
     }
     const scrollback = existing.scrollback.toBase64();
     if (scrollback) {
@@ -618,6 +625,7 @@ export function spawnAgent(win: BrowserWindow, args: SpawnAgentArgs): void {
     flushTimer: null,
     subscribers: new Set(),
     scrollback: new RingBuffer(PTY_REPLAY_BYTES),
+    mirror: new ScreenMirror(args.cols, args.rows),
     containerName: spawnSpec.containerName,
   };
   sessions.set(args.agentId, session);
@@ -643,6 +651,7 @@ export function resizeAgent(agentId: string, cols: number, rows: number): void {
   const session = sessions.get(agentId);
   if (!session) throw new Error(`Agent not found: ${agentId}`);
   session.proc.resize(cols, rows);
+  session.mirror.resize(cols, rows);
 }
 
 export function pauseAgent(agentId: string): void {
@@ -719,6 +728,22 @@ export function unsubscribeFromAgent(agentId: string, cb: (encoded: string) => v
 /** Get the scrollback buffer for an agent as a base64 string. */
 export function getAgentScrollback(agentId: string): string | null {
   return sessions.get(agentId)?.scrollback.toBase64() ?? null;
+}
+
+/**
+ * Serialize an agent's rendered screen and history as base64, for a viewer
+ * that is about to follow its live output. The snapshot covers exactly the
+ * output emitted before this call, so a subscriber registered in the same
+ * tick receives everything after it with no gap or overlap. `done` gets null
+ * if the agent is gone.
+ */
+export function snapshotAgentScreen(agentId: string, done: (data: string | null) => void): void {
+  const session = sessions.get(agentId);
+  if (!session) {
+    done(null);
+    return;
+  }
+  session.mirror.snapshot((data) => done(Buffer.from(data, 'utf8').toString('base64')));
 }
 
 /** Return all active agent IDs. */

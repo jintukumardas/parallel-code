@@ -17,6 +17,7 @@ vi.mock('../ipc/pty.js', () => ({
   subscribeToAgent: vi.fn(),
   unsubscribeFromAgent: vi.fn(),
   getAgentScrollback: vi.fn(() => null),
+  snapshotAgentScreen: vi.fn(),
   getActiveAgentIds: vi.fn(() => []),
   getAgentMeta: vi.fn(() => null),
   getAgentCols: vi.fn(() => 80),
@@ -97,6 +98,39 @@ describe('mobile token over WebSocket', () => {
       expect(pty.subscribeToAgent).toHaveBeenCalledWith('agent-1', expect.any(Function));
     });
     expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.close();
+  });
+
+  it('sends the screen snapshot before output that arrived while serializing', async () => {
+    let onOutput: ((encoded: string) => void) | undefined;
+    let onSnapshot: ((data: string | null) => void) | undefined;
+    vi.mocked(pty.subscribeToAgent).mockImplementation((_id, cb) => {
+      onOutput = cb;
+      return true;
+    });
+    vi.mocked(pty.snapshotAgentScreen).mockImplementation((_id, done) => {
+      onSnapshot = done;
+    });
+
+    const ws = await connectAndAuth(mobileToken);
+    const received: { type: string; data?: string }[] = [];
+    ws.on('message', (raw) => {
+      const msg = JSON.parse(String(raw)) as { type: string; data?: string };
+      if (msg.type === 'scrollback' || msg.type === 'output') received.push(msg);
+    });
+    ws.send(JSON.stringify({ type: 'subscribe', agentId: 'agent-1' }));
+    await vi.waitFor(() => expect(onSnapshot).toBeDefined());
+
+    onOutput?.('during');
+    onSnapshot?.('snap');
+    onOutput?.('after');
+
+    await vi.waitFor(() => expect(received).toHaveLength(3));
+    expect(received.map((m) => [m.type, m.data])).toEqual([
+      ['scrollback', 'snap'],
+      ['output', 'during'],
+      ['output', 'after'],
+    ]);
     ws.close();
   });
 

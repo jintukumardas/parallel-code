@@ -13,6 +13,7 @@ import {
   subscribeToAgent,
   unsubscribeFromAgent,
   getAgentScrollback,
+  snapshotAgentScreen,
   getActiveAgentIds,
   getAgentMeta,
   getAgentCols,
@@ -1384,20 +1385,11 @@ export function startRemoteServer(opts: {
           const subs = clientSubs.get(ws);
           if (subs?.has(msg.agentId)) break;
 
-          const scrollback = getAgentScrollback(msg.agentId);
-          if (scrollback) {
-            ws.send(
-              JSON.stringify({
-                type: 'scrollback',
-                agentId: msg.agentId,
-                data: scrollback,
-                cols: getAgentCols(msg.agentId),
-                rows: getAgentRows(msg.agentId),
-              } satisfies ServerMessage),
-            );
-          }
-
-          const cb = (encoded: string) => {
+          // Live output that arrives while the screen snapshot is being
+          // serialized is held back and sent after it, so the phone sees the
+          // snapshot first and then every byte that followed it, once.
+          let pending: string[] | null = [];
+          const sendOutput = (encoded: string) => {
             if (ws.readyState === WebSocket.OPEN) {
               ws.send(
                 JSON.stringify({
@@ -1408,9 +1400,32 @@ export function startRemoteServer(opts: {
               );
             }
           };
-          if (subscribeToAgent(msg.agentId, cb)) {
-            subs?.set(msg.agentId, cb);
-          }
+          const cb = (encoded: string) => {
+            if (pending) pending.push(encoded);
+            else sendOutput(encoded);
+          };
+          if (!subscribeToAgent(msg.agentId, cb)) break;
+          subs?.set(msg.agentId, cb);
+
+          snapshotAgentScreen(msg.agentId, (scrollback) => {
+            // Unsubscribed (or resubscribed) while serializing: this snapshot
+            // belongs to a stale subscription.
+            if (subs?.get(msg.agentId) !== cb) return;
+            const held = pending ?? [];
+            pending = null;
+            if (scrollback && ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  type: 'scrollback',
+                  agentId: msg.agentId,
+                  data: scrollback,
+                  cols: getAgentCols(msg.agentId),
+                  rows: getAgentRows(msg.agentId),
+                } satisfies ServerMessage),
+              );
+            }
+            for (const encoded of held) sendOutput(encoded);
+          });
           break;
         }
 

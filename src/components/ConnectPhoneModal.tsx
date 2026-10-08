@@ -289,11 +289,14 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
           </div>
         </div>
 
-        {/* QR Code */}
+        {/* QR Code — flex-shrink 0: the Dialog panel is a max-height flex column and
+            overflow:hidden drops this box's min-height to 0, so it would collapse
+            to nothing whenever the dialog content is taller than the viewport cap. */}
         <div
           style={{
             width: '200px',
             height: '200px',
+            'flex-shrink': '0',
             'border-radius': 'var(--radius-md)',
             background: '#ffffff',
             display: 'flex',
